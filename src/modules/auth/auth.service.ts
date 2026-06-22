@@ -4,12 +4,14 @@ import {
   Injectable,
   InternalServerErrorException,
   Logger,
+  NotFoundException,
 } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
 import * as argon2 from 'argon2';
 import { createHash, randomBytes } from 'node:crypto';
 import { MagicLinkType } from 'src/generated/prisma/enums';
 import { EmailService } from 'src/common/email/email.service';
+import { JwtService } from '@nestjs/jwt';
 
 @Injectable()
 export class AuthService {
@@ -17,6 +19,7 @@ export class AuthService {
   constructor(
     private readonly prismaService: PrismaService,
     private readonly emailService: EmailService,
+    private readonly jwtService: JwtService,
   ) {}
   async register(email: string, password: string) {
     try {
@@ -111,5 +114,44 @@ export class AuthService {
     return {
       message: `Email verified. Please Login using your email and password by going to the login page`,
     };
+  }
+
+  async login(email: string, password: string) {
+    try {
+      const user = await this.prismaService.user.findUnique({
+        where: { email },
+        select: {
+          id: true,
+          password_hash: true,
+          is_email_verified: true,
+        },
+      });
+
+      if (!user) {
+        throw new NotFoundException('User not found. Please register first');
+      }
+
+      if (!user.is_email_verified) {
+        throw new ConflictException(
+          'Email not verified, please verify email before logging in',
+        );
+      }
+
+      const isValidPassword = await argon2.verify(user.password_hash, password);
+
+      if (!isValidPassword) {
+        throw new BadRequestException('Wrong email or password');
+      }
+
+      const payload = { sub: user.id, email: email };
+      const accessToken = await this.jwtService.signAsync(payload);
+
+      return { access_token: accessToken };
+    } catch (error: unknown) {
+      this.logger.error(
+        'Error during login',
+        error instanceof Error ? error.stack : undefined,
+      );
+    }
   }
 }

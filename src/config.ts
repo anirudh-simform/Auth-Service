@@ -13,6 +13,9 @@ const envSchema = z.object({
   SMTP_PASS: z.string(),
 
   EMAIL_VERIFICATION_BASE_URL: z.string(),
+
+  // JWT Secrets
+  ACCESS_TOKEN_SECRET: z.string(),
 });
 
 const config = envSchema.parse(process.env);
