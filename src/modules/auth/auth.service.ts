@@ -61,10 +61,10 @@ export class AuthService {
 
         await prisma.magicLink.create({
           data: {
-            userId: user.id,
-            tokenHash,
-            expiresAt: new Date(Date.now() + 15 * 60 * 1000),
-            magicLinkType: MagicLinkType.USER_REGISTRATION,
+            user_id: user.id,
+            token_hash: tokenHash,
+            expires_at: new Date(Date.now() + 15 * 60 * 1000),
+            magic_link_type: MagicLinkType.USER_REGISTRATION,
           },
         });
       });
@@ -80,10 +80,10 @@ export class AuthService {
 
     const rows = await this.prismaService.user.updateMany({
       where: {
-        magicLinks: {
+        magic_links: {
           some: {
-            tokenHash: { equals: tokenHash },
-            expiresAt: { gt: new Date() },
+            token_hash: { equals: tokenHash },
+            expires_at: { gt: new Date() },
           },
         },
       },
@@ -99,16 +99,16 @@ export class AuthService {
     }
 
     const user = await this.prismaService.magicLink.findUnique({
-      where: { tokenHash },
-      select: { userId: true },
+      where: { token_hash: tokenHash },
+      select: { user_id: true },
     });
 
     // delete all the user registration magic links if user is not deleted
     if (user) {
       await this.prismaService.magicLink.deleteMany({
         where: {
-          userId: user.userId,
-          magicLinkType: MagicLinkType.USER_REGISTRATION,
+          user_id: user.user_id,
+          magic_link_type: MagicLinkType.USER_REGISTRATION,
         },
       });
     }

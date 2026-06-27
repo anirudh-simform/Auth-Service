@@ -20,7 +20,7 @@ model User {
   is_email_verified Boolean     @default(false)
   created_at        DateTime    @default(now()) @db.Timestamptz(6)
   updated_at        DateTime    @updatedAt @db.Timestamptz(6)
-  magicLinks        MagicLink[]
+  magic_links       MagicLink[]
 }
 
 enum MagicLinkType {
@@ -29,10 +29,12 @@ enum MagicLinkType {
 }
 
 model MagicLink {
-  id            Int           @id @default(autoincrement())
-  userId        Int
-  user          User          @relation(fields: [userId], references: [id])
-  tokenHash     String        @unique
-  expiresAt     DateTime      @db.Timestamptz(6)
-  magicLinkType MagicLinkType
+  id              Int           @id @default(autoincrement())
+  user_id         Int
+  user            User          @relation(fields: [user_id], references: [id])
+  token_hash      String        @unique
+  expires_at      DateTime      @db.Timestamptz(6)
+  magic_link_type MagicLinkType
+  created_at      DateTime      @default(now()) @db.Timestamptz(6)
+  updated_at      DateTime      @updatedAt @db.Timestamptz(6)
 }
