@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   Injectable,
   InternalServerErrorException,
   Logger,
@@ -152,6 +153,29 @@ export class AuthService {
         'Error during login',
         error instanceof Error ? error.stack : undefined,
       );
+
+      throw error;
     }
+  }
+
+  async me(userId: number) {
+    const user = await this.prismaService.user.findUnique({
+      where: {
+        id: userId,
+      },
+      omit: {
+        password_hash: true,
+      },
+    });
+
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+
+    if (!user.is_email_verified) {
+      throw new ForbiddenException('Email not verified: Cannot access profile');
+    }
+
+    return user;
   }
 }
