@@ -14,13 +14,14 @@ datasource db {
 }
 
 model User {
-  id                Int         @id @default(autoincrement())
-  email             String      @unique
+  id                String        @id @default(uuid(7)) @db.Uuid
+  email             String        @unique
   password_hash     String
-  is_email_verified Boolean     @default(false)
-  created_at        DateTime    @default(now()) @db.Timestamptz(6)
-  updated_at        DateTime    @updatedAt @db.Timestamptz(6)
+  is_email_verified Boolean       @default(false)
+  created_at        DateTime      @default(now()) @db.Timestamptz(6)
+  updated_at        DateTime      @updatedAt @db.Timestamptz(6)
   magic_links       MagicLink[]
+  userSessions      UserSession[]
 }
 
 enum MagicLinkType {
@@ -29,12 +30,29 @@ enum MagicLinkType {
 }
 
 model MagicLink {
-  id              Int           @id @default(autoincrement())
-  user_id         Int
+  id              String        @id @default(uuid(7)) @db.Uuid
+  user_id         String        @db.Uuid
   user            User          @relation(fields: [user_id], references: [id])
   token_hash      String        @unique
   expires_at      DateTime      @db.Timestamptz(6)
   magic_link_type MagicLinkType
   created_at      DateTime      @default(now()) @db.Timestamptz(6)
   updated_at      DateTime      @updatedAt @db.Timestamptz(6)
+}
+
+model UserSession {
+  id                 String    @id @db.Uuid
+  user_id            String    @db.Uuid
+  user               User      @relation(fields: [user_id], references: [id])
+  refresh_token_hash String
+  ip_address         String    @db.Inet
+  user_agent         String    @default("Unknown")
+  last_active_at     DateTime  @db.Timestamptz(6)
+  expires_at         DateTime  @db.Timestamptz(6)
+  revoked_at         DateTime? @db.Timestamptz(6)
+  created_at         DateTime  @default(now()) @db.Timestamptz(6)
+  updated_at         DateTime  @updatedAt @db.Timestamptz(6)
+
+  @@index([user_id])
+  @@index([expires_at])
 }

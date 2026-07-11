@@ -13,6 +13,10 @@ import { createHash, randomBytes } from 'node:crypto';
 import { MagicLinkType } from 'src/generated/prisma/enums';
 import { EmailService } from 'src/common/email/email.service';
 import { JwtService } from '@nestjs/jwt';
+import { UAParser } from 'ua-parser-js';
+import { SessionService } from '../session/session.service';
+import { UserSession } from 'src/generated/prisma/client';
+import { UserSessionWithUserDetails } from './types/express';
 
 @Injectable()
 export class AuthService {
@@ -21,6 +25,7 @@ export class AuthService {
     private readonly prismaService: PrismaService,
     private readonly emailService: EmailService,
     private readonly jwtService: JwtService,
+    private readonly sessionService: SessionService,
   ) {}
   async register(email: string, password: string) {
     try {
@@ -117,7 +122,7 @@ export class AuthService {
     };
   }
 
-  async login(email: string, password: string) {
+  async login(email: string, password: string, userAgent: string, ip: string) {
     try {
       const user = await this.prismaService.user.findUnique({
         where: { email },
@@ -144,10 +149,22 @@ export class AuthService {
         throw new BadRequestException('Wrong email or password');
       }
 
-      const payload = { sub: user.id, email: email };
+      /* Fetch device info from HTTP Headers */
+      const deviceInfo = UAParser(userAgent);
+
+      const { userSession, refreshToken } =
+        await this.sessionService.createUserSession({
+          userId: user.id,
+          userAgent: deviceInfo.ua,
+          userIp: ip,
+        });
+      const payload = { sub: user.id, email: email, sid: userSession.id };
       const accessToken = await this.jwtService.signAsync(payload);
 
-      return { access_token: accessToken };
+      return {
+        access_token: accessToken,
+        refresh_token: `${userSession.id}.${refreshToken}`,
+      };
     } catch (error: unknown) {
       this.logger.error(
         'Error during login',
@@ -158,7 +175,7 @@ export class AuthService {
     }
   }
 
-  async me(userId: number) {
+  async me(userId: string) {
     const user = await this.prismaService.user.findUnique({
       where: {
         id: userId,
@@ -177,5 +194,25 @@ export class AuthService {
     }
 
     return user;
+  }
+
+  async refresh(userSession: UserSessionWithUserDetails) {
+    await this.sessionService.invalidateSession(userSession.id);
+    const { userSession: newSession, refreshToken } =
+      await this.sessionService.createUserSession({
+        userAgent: userSession.user_agent,
+        userId: userSession.user.id,
+        userIp: userSession.ip_address,
+      });
+    const payload = {
+      sub: newSession.user_id,
+      email: userSession.user.email,
+      sid: newSession.id,
+    };
+    const accessToken = await this.jwtService.signAsync(payload);
+    return {
+      access_token: accessToken,
+      refresh_token: `${newSession.id}.${refreshToken}`,
+    };
   }
 }

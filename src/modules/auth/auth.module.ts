@@ -4,19 +4,22 @@ import { AuthController } from './auth.controller';
 import { EmailModule } from 'src/common/email/email.module';
 import { JwtModule } from '@nestjs/jwt';
 import { config } from 'src/config';
-import { APP_GUARD } from '@nestjs/core';
 import { AuthGuard } from './guards/auth/auth.guard';
+import { SessionModule } from '../session/session.module';
+import { RefreshTokenGuard } from './guards/refresh-token/refresh-token.guard';
 
 @Module({
   imports: [
     EmailModule,
+    SessionModule,
     JwtModule.register({
       global: true,
       secret: config.ACCESS_TOKEN_SECRET,
-      signOptions: { expiresIn: '120s' },
+      signOptions: { expiresIn: '15m' },
     }),
   ],
   controllers: [AuthController],
-  providers: [AuthService, { provide: APP_GUARD, useClass: AuthGuard }],
+  providers: [AuthService, AuthGuard, RefreshTokenGuard],
+  exports: [AuthGuard],
 })
 export class AuthModule {}

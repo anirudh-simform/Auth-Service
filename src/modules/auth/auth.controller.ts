@@ -1,4 +1,12 @@
-import { Body, Controller, Get, Post, Query, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Ip,
+  Post,
+  Query,
+  UseGuards,
+} from '@nestjs/common';
 import { AuthService } from './auth.service';
 import { UserRegistrationBodyDto } from './dtos/user-registration-body.dto';
 import { VerifyEmailQueryParamsDto } from './dtos/verify-email-query-params.dto';
@@ -6,6 +14,10 @@ import { UserLoginBodyDto } from './dtos/user-login-body.dto';
 import { AuthGuard } from './guards/auth/auth.guard';
 import { type User } from 'src/generated/prisma/client';
 import { AuthUser } from './decorators/auth-user.decorator';
+import { UserAgent } from './decorators/user-agent.decorator';
+import { RefreshTokenGuard } from './guards/refresh-token/refresh-token.guard';
+import { UserSession } from './decorators/user-session.decorator';
+import { type UserSessionWithUserDetails } from './types/express';
 
 @Controller('auth')
 export class AuthController {
@@ -22,13 +34,29 @@ export class AuthController {
   }
 
   @Post('login')
-  async login(@Body() payload: UserLoginBodyDto) {
-    return await this.authService.login(payload.email, payload.password);
+  async login(
+    @Body() payload: UserLoginBodyDto,
+    @Ip() ip: string,
+    @UserAgent() userAgent: string,
+  ) {
+    return await this.authService.login(
+      payload.email,
+      payload.password,
+      userAgent,
+      ip,
+    );
   }
 
   @Get('me')
   @UseGuards(AuthGuard)
   async me(@AuthUser() user: User) {
     return await this.authService.me(user.id);
+  }
+
+  @Get('refresh')
+  @UseGuards(RefreshTokenGuard)
+  async refresh(@UserSession() userSession: UserSessionWithUserDetails) {
+    console.log(userSession);
+    return await this.authService.refresh(userSession);
   }
 }

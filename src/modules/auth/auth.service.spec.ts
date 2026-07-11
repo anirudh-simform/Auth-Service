@@ -42,10 +42,11 @@ describe('AuthService', () => {
   });
 
   describe('User login', () => {
+    const ip = '1.1.1.1';
     it('should throw not found exception when user does not exist', async () => {
       prismaMock.user.findUnique.mockReturnValueOnce(null);
       await expect(
-        authService.login('dummy@gmail.com', 'password'),
+        authService.login('dummy@gmail.com', 'password', ip, 'chrome'),
       ).rejects.toThrow('User not found. Please register first');
     });
 
@@ -56,7 +57,7 @@ describe('AuthService', () => {
         is_email_verified: false,
       });
       await expect(
-        authService.login('dummy@gmail.com', 'password'),
+        authService.login('dummy@gmail.com', 'password', ip, 'chrome'),
       ).rejects.toThrow(
         'Email not verified, please verify email before logging in',
       );
@@ -73,7 +74,7 @@ describe('AuthService', () => {
       (argon2.verify as jest.Mock).mockResolvedValue(false);
 
       await expect(
-        authService.login('dummy@gmail.com', 'password'),
+        authService.login('dummy@gmail.com', 'password', ip, 'chrome'),
       ).rejects.toThrow('Wrong email or password');
     });
   });

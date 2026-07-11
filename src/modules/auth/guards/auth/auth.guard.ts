@@ -9,7 +9,7 @@ import { JwtService } from '@nestjs/jwt';
 import { Request } from 'express';
 import { Observable } from 'rxjs';
 import { config } from 'src/config';
-import { JwtPayload } from '../../types/jwt-payload.type';
+import { AccessTokenPayloadSchema } from '../../types/access-token-payload';
 import { PrismaService } from 'src/prisma/prisma.service';
 
 @Injectable()
@@ -35,17 +35,31 @@ export class AuthGuard implements CanActivate {
     if (!authToken) throw new UnauthorizedException('Token not present');
 
     try {
-      const payload = await this.jwtService.verifyAsync<JwtPayload>(authToken, {
-        secret: config.ACCESS_TOKEN_SECRET,
-      });
+      const payload = await this.jwtService.verifyAsync<Record<string, string>>(
+        authToken,
+        {
+          secret: config.ACCESS_TOKEN_SECRET,
+        },
+      );
+
+      const typedPayload = AccessTokenPayloadSchema.parse(payload);
 
       const user = await this.prismaService.user.findUnique({
-        where: { email: payload.email },
+        where: {
+          email: payload.email,
+          userSessions: {
+            some: {
+              id: typedPayload.sid,
+              expires_at: { gt: new Date() },
+              revoked_at: null,
+            },
+          },
+        },
         omit: { password_hash: true },
       });
 
       if (!user) {
-        throw new UnauthorizedException('User not found');
+        throw new UnauthorizedException('User session not found');
       }
 
       req.user = user;

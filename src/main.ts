@@ -8,11 +8,12 @@ import { Logger } from '@nestjs/common';
 async function bootstrap() {
   const logger = new Logger();
   const app = await NestFactory.create(AppModule);
-  await app.listen(process.env.PORT ?? 3000, () => {
-    logger.log(`Nest application listening on port: ${config.PORT}`);
-  });
 
   app.useGlobalInterceptors(new LoggingInterceptor());
   app.useGlobalFilters(new GlobalFilter());
+
+  await app.listen(process.env.PORT ?? 3000, () => {
+    logger.log(`Nest application listening on port: ${config.PORT}`);
+  });
 }
 bootstrap();
