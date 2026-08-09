@@ -4,7 +4,7 @@
 // Get a free hosted Postgres database in seconds: `npx create-db`
 
 generator client {
-  provider     = "prisma-client"
+  provider     = "prisma-client-js"
   output       = "../src/generated/prisma"
   moduleFormat = "cjs"
 }
@@ -14,14 +14,15 @@ datasource db {
 }
 
 model User {
-  id                String        @id @default(uuid(7)) @db.Uuid
-  email             String        @unique
+  id                String          @id @default(uuid(7)) @db.Uuid
+  email             String          @unique
   password_hash     String
-  is_email_verified Boolean       @default(false)
-  created_at        DateTime      @default(now()) @db.Timestamptz(6)
-  updated_at        DateTime      @updatedAt @db.Timestamptz(6)
+  is_email_verified Boolean         @default(false)
+  created_at        DateTime        @default(now()) @db.Timestamptz(6)
+  updated_at        DateTime        @updatedAt @db.Timestamptz(6)
   magic_links       MagicLink[]
   userSessions      UserSession[]
+  orgMemberships    OrgMembership[]
 }
 
 enum MagicLinkType {
@@ -55,4 +56,55 @@ model UserSession {
 
   @@index([user_id])
   @@index([expires_at])
+}
+
+model Permission {
+  id                 String              @id @default(uuid(7)) @db.Uuid
+  key                String              @unique
+  name               String
+  created_at         DateTime            @default(now()) @db.Timestamptz(6)
+  orgRolePermissions OrgRolePermission[]
+}
+
+model Organization {
+  id             String          @id @default(uuid(7)) @db.Uuid
+  name           String
+  orgRoles       OrgRole[]
+  orgMemberships OrgMembership[]
+}
+
+model OrgRolePermission {
+  id            String     @id @default(uuid(7)) @db.Uuid
+  role_id       String     @db.Uuid
+  role          OrgRole    @relation(fields: [role_id], references: [id])
+  permission_id String     @db.Uuid
+  permissions   Permission @relation(fields: [permission_id], references: [id])
+}
+
+model OrgRole {
+  id                 String              @id @default(uuid(7)) @db.Uuid
+  org_id             String              @db.Uuid
+  org                Organization        @relation(fields: [org_id], references: [id])
+  role_name          String
+  is_system          Boolean             @default(false)
+  parent_role_id     String?             @db.Uuid
+  parentRole         OrgRole?            @relation("RoleHierarchy", fields: [parent_role_id], references: [id])
+  childRoles         OrgRole[]           @relation("RoleHierarchy")
+  orgMemberships     OrgMembership[]
+  orgRolePermissions OrgRolePermission[]
+
+  @@unique([org_id, role_name])
+}
+
+model OrgMembership {
+  id         String       @id @default(uuid(7)) @db.Uuid
+  org_id     String       @db.Uuid
+  org        Organization @relation(fields: [org_id], references: [id])
+  user       User         @relation(fields: [user_id], references: [id])
+  user_id    String       @db.Uuid
+  orgRole    OrgRole      @relation(fields: [orgRole_id], references: [id])
+  orgRole_id String       @db.Uuid
+
+  @@unique([user_id, orgRole_id])
+  @@unique([user_id, org_id])
 }
