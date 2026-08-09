@@ -56,16 +56,22 @@ export class OrganizationsController {
       params.organizationId,
       payload.userId,
       payload.roleId,
+      undefined,
+      user.id,
     );
   }
 
   @Delete(':organizationId/members/:userId')
   @UseGuards(AuthGuard, AuthorizationGuard)
   @Permission(SystemPermissions['member.remove'])
-  async removeMember(@Param() params: ChangeUserRoleParamsDto) {
+  async removeMember(
+    @AuthUser() user: User,
+    @Param() params: ChangeUserRoleParamsDto,
+  ) {
     return await this.organizationService.removeMember(
       params.organizationId,
       params.userId,
+      user.id,
     );
   }
 
@@ -105,6 +111,7 @@ export class OrganizationsController {
   @UseGuards(AuthGuard, AuthorizationGuard)
   @Permission(SystemPermissions['role.create'])
   async createRole(
+    @AuthUser() user: User,
     @Param() params: OrganizationIdParam,
     @Body() payload: CreateRolePayloadDto,
   ) {
@@ -114,6 +121,7 @@ export class OrganizationsController {
       payload.permissionIds,
       undefined,
       payload.parentRoleId,
+      user.id,
     );
   }
 
@@ -121,6 +129,7 @@ export class OrganizationsController {
   @UseGuards(AuthGuard, AuthorizationGuard)
   @Permission(SystemPermissions['role.update'])
   async updateRole(
+    @AuthUser() user: User,
     @Param() params: RoleIdParamDto,
     @Body() payload: UpdateRolePayloadDto,
   ) {
@@ -128,16 +137,18 @@ export class OrganizationsController {
       params.organizationId,
       params.roleId,
       payload,
+      user.id,
     );
   }
 
   @Delete(':organizationId/roles/:roleId')
   @UseGuards(AuthGuard, AuthorizationGuard)
   @Permission(SystemPermissions['role.delete'])
-  async deleteRole(@Param() params: RoleIdParamDto) {
+  async deleteRole(@AuthUser() user: User, @Param() params: RoleIdParamDto) {
     return await this.authorizationService.deleteRole(
       params.organizationId,
       params.roleId,
+      user.id,
     );
   }
 

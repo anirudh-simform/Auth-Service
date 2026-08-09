@@ -10,6 +10,8 @@ import { JwtService } from '@nestjs/jwt';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { EmailService } from 'src/common/email/email.service';
 import { ForbiddenException, NotFoundException } from '@nestjs/common';
+import { AuditLogService } from '../audit-log/audit-log.service';
+import { SessionService } from '../session/session.service';
 
 describe('AuthService', () => {
   let authService: AuthService;
@@ -24,6 +26,16 @@ describe('AuthService', () => {
       deleteMany: jest.fn(),
     },
   };
+
+  const auditLogServiceMock = {
+    record: jest.fn(),
+  };
+
+  const sessionServiceMock = {
+    createUserSession: jest.fn(),
+    invalidateSession: jest.fn(),
+  };
+
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -31,10 +43,16 @@ describe('AuthService', () => {
         JwtService,
         EmailService,
         { provide: PrismaService, useValue: prismaMock },
+        { provide: AuditLogService, useValue: auditLogServiceMock },
+        { provide: SessionService, useValue: sessionServiceMock },
       ],
     }).compile();
 
     authService = module.get<AuthService>(AuthService);
+  });
+
+  afterEach(() => {
+    jest.clearAllMocks();
   });
 
   it('should be defined', () => {

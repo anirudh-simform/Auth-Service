@@ -8,6 +8,7 @@ import { PrismaModule } from './prisma/prisma.module';
 import { SessionModule } from './modules/session/session.module';
 import { OrganizationsModule } from './modules/organizations/organizations.module';
 import { AuthorizationModule } from './modules/authorization/authorization.module';
+import { AuditLogModule } from './modules/audit-log/audit-log.module';
 import { config } from './config';
 
 @Module({
@@ -25,6 +26,7 @@ import { config } from './config';
     SessionModule,
     OrganizationsModule,
     AuthorizationModule,
+    AuditLogModule,
   ],
   controllers: [AppController],
   providers: [AppService, { provide: APP_GUARD, useClass: ThrottlerGuard }],

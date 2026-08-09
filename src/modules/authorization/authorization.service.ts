@@ -10,31 +10,36 @@ import { Prisma } from 'src/generated/prisma/client';
 import { SystemPermissions } from './constants/system-permissions.constant';
 import { OWNER_ONLY_PERMISSIONS } from './constants/owner-only-permissions.constant';
 import { OrgRole } from 'src/generated/prisma/client';
+import { AuditLogService } from '../audit-log/audit-log.service';
+import { AuditEventType } from '../audit-log/constants/audit-event-types.constant';
 
 @Injectable()
 export class AuthorizationService {
   private readonly logger = new Logger(AuthorizationService.name);
-  constructor(private readonly prismaService: PrismaService) {}
+  constructor(
+    private readonly prismaService: PrismaService,
+    private readonly auditLogService: AuditLogService,
+  ) {}
   /* Creates system roles and associated permissions */
   async createSystemRoles(
     tx: Prisma.TransactionClient = this.prismaService,
     orgId: string,
   ) {
-    const createOwnerRole = this.createRole(
+    const createOwnerRole = this.createSystemRole(
       orgId,
       SystemRoles.Owner,
       await this.getSystemRolePermissionIds(SystemRoles.Owner),
       tx,
     );
 
-    const createAdminRole = this.createRole(
+    const createAdminRole = this.createSystemRole(
       orgId,
       SystemRoles.Admin,
       await this.getSystemRolePermissionIds(SystemRoles.Admin),
       tx,
     );
 
-    const createMemberRole = this.createRole(
+    const createMemberRole = this.createSystemRole(
       orgId,
       SystemRoles.Member,
       await this.getSystemRolePermissionIds(SystemRoles.Member),
@@ -50,12 +55,41 @@ export class AuthorizationService {
     return { ownerRole, adminRole, memberRole };
   }
 
+  /**
+   * Bootstraps a reserved system role (Owner/Admin/Member) for a new org.
+   * Bypasses the reserved-name check in createRole() - that check exists to
+   * stop admins from shadowing a system role via the public API, not to
+   * block the system itself from provisioning them.
+   */
+  private async createSystemRole(
+    orgId: string,
+    roleName: SystemRoles,
+    permissionIds: string[],
+    tx: Prisma.TransactionClient = this.prismaService,
+  ) {
+    return await tx.orgRole.create({
+      data: {
+        org_id: orgId,
+        role_name: roleName,
+        is_system: true,
+        orgRolePermissions: {
+          createMany: {
+            data: permissionIds.map((permissionId) => ({
+              permission_id: permissionId,
+            })),
+          },
+        },
+      },
+    });
+  }
+
   async createRole(
     orgId: string,
     roleName: string,
     permissionIds: string[],
     tx: Prisma.TransactionClient = this.prismaService,
     parentRoleId?: string,
+    actorUserId?: string,
   ) {
     if (await this.hasOwnerOnlyPermissions(permissionIds)) {
       throw new ForbiddenException(
@@ -80,7 +114,7 @@ export class AuthorizationService {
       }
     }
 
-    return await tx.orgRole.create({
+    const role = await tx.orgRole.create({
       data: {
         org_id: orgId,
         role_name: roleName,
@@ -95,6 +129,20 @@ export class AuthorizationService {
         },
       },
     });
+
+    // actorUserId is omitted for system roles created internally during org setup
+    if (actorUserId !== undefined) {
+      await this.auditLogService.record({
+        eventType: AuditEventType.ORG_ROLE_CREATED,
+        actorUserId,
+        orgId,
+        targetType: 'OrgRole',
+        targetId: role.id,
+        metadata: { roleName, permissionIds, parentRoleId: parentRoleId ?? null },
+      });
+    }
+
+    return role;
   }
 
   async hasOwnerOnlyPermissions(permissionIds: string[]) {
@@ -238,7 +286,10 @@ export class AuthorizationService {
 
     const member = await this.prismaService.orgMembership.findUnique({
       where: { user_id_org_id: { user_id: memberId, org_id: orgId } },
-      select: { orgRole: { select: { is_system: true, role_name: true } } },
+      select: {
+        orgRole_id: true,
+        orgRole: { select: { is_system: true, role_name: true } },
+      },
     });
 
     if (!member) throw new BadRequestException('User not found');
@@ -261,6 +312,15 @@ export class AuthorizationService {
         data: {
           orgRole_id: orgRoleId,
         },
+      });
+
+      await this.auditLogService.record({
+        eventType: AuditEventType.ORG_MEMBER_ROLE_CHANGED,
+        actorUserId: adminId,
+        orgId,
+        targetType: 'User',
+        targetId: memberId,
+        metadata: { previousOrgRoleId: member.orgRole_id, newOrgRoleId: orgRoleId },
       });
 
       return { message: 'Role changed successfully' };
@@ -339,6 +399,7 @@ export class AuthorizationService {
       permissionIds?: string[];
       parentRoleId?: string;
     },
+    actorUserId?: string,
   ) {
     const role = await this.prismaService.orgRole.findFirst({
       where: { id: roleId, org_id: orgId },
@@ -372,7 +433,7 @@ export class AuthorizationService {
       );
     }
 
-    return await this.prismaService.$transaction(async (tx) => {
+    const updatedRole = await this.prismaService.$transaction(async (tx) => {
       if (updates.permissionIds !== undefined) {
         await tx.orgRolePermission.deleteMany({ where: { role_id: roleId } });
         await tx.orgRolePermission.createMany({
@@ -391,9 +452,22 @@ export class AuthorizationService {
         },
       });
     });
+
+    if (actorUserId !== undefined) {
+      await this.auditLogService.record({
+        eventType: AuditEventType.ORG_ROLE_UPDATED,
+        actorUserId,
+        orgId,
+        targetType: 'OrgRole',
+        targetId: roleId,
+        metadata: { ...updates },
+      });
+    }
+
+    return updatedRole;
   }
 
-  async deleteRole(orgId: string, roleId: string) {
+  async deleteRole(orgId: string, roleId: string, actorUserId?: string) {
     const role = await this.prismaService.orgRole.findFirst({
       where: { id: roleId, org_id: orgId },
     });
@@ -428,6 +502,17 @@ export class AuthorizationService {
     }
 
     await this.prismaService.orgRole.delete({ where: { id: roleId } });
+
+    if (actorUserId !== undefined) {
+      await this.auditLogService.record({
+        eventType: AuditEventType.ORG_ROLE_DELETED,
+        actorUserId,
+        orgId,
+        targetType: 'OrgRole',
+        targetId: roleId,
+        metadata: { roleName: role.role_name },
+      });
+    }
 
     return { message: 'Role deleted successfully' };
   }

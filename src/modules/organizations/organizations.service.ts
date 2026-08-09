@@ -3,17 +3,20 @@ import { User } from 'src/generated/prisma/client';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { AuthorizationService } from '../authorization/authorization.service';
 import { Prisma } from 'src/generated/prisma/client';
+import { AuditLogService } from '../audit-log/audit-log.service';
+import { AuditEventType } from '../audit-log/constants/audit-event-types.constant';
 @Injectable()
 export class OrganizationsService {
   private readonly logger = new Logger(OrganizationsService.name);
   constructor(
     private readonly prismaService: PrismaService,
     private readonly authorizationService: AuthorizationService,
+    private readonly auditLogService: AuditLogService,
   ) {}
 
   async createOrganization(owner: User, orgName: string) {
     try {
-      await this.prismaService.$transaction(async (tx) => {
+      const org = await this.prismaService.$transaction(async (tx) => {
         /* create organization */
         const org = await tx.organization.create({ data: { name: orgName } });
 
@@ -22,6 +25,17 @@ export class OrganizationsService {
           org.id,
         );
         await this.addUserToOrg(org.id, owner.id, roles.ownerRole.id, tx);
+
+        return org;
+      });
+
+      await this.auditLogService.record({
+        eventType: AuditEventType.ORG_CREATED,
+        actorUserId: owner.id,
+        orgId: org.id,
+        targetType: 'Organization',
+        targetId: org.id,
+        metadata: { orgName },
       });
     } catch (error: unknown) {
       this.logger.error(
@@ -113,6 +127,18 @@ export class OrganizationsService {
           });
         }
       });
+
+      await this.auditLogService.record({
+        eventType: AuditEventType.ORG_OWNERSHIP_TRANSFERRED,
+        actorUserId: transferor.id,
+        orgId,
+        targetType: 'User',
+        targetId: transfereeId,
+        metadata: {
+          previousOwnerId: transferor.id,
+          replacementOrgRoleId: transferorReplacementOrgRoleId ?? null,
+        },
+      });
     } catch (error: unknown) {
       if (error instanceof BadRequestException) throw error;
       this.logger.error(error instanceof Error ? error.stack : undefined);
@@ -127,6 +153,7 @@ export class OrganizationsService {
     userId: string,
     orgRoleId: string,
     tx: Prisma.TransactionClient = this.prismaService,
+    actorUserId?: string,
   ) {
     const role = await tx.orgRole.findFirst({
       where: { id: orgRoleId, org_id: orgId },
@@ -146,10 +173,23 @@ export class OrganizationsService {
       },
     });
 
+    // actorUserId is omitted when a membership is created as a side-effect of
+    // another audited action (e.g. the owner joining their own new org)
+    if (actorUserId !== undefined) {
+      await this.auditLogService.record({
+        eventType: AuditEventType.ORG_MEMBER_ADDED,
+        actorUserId,
+        orgId,
+        targetType: 'User',
+        targetId: userId,
+        metadata: { orgRoleId },
+      });
+    }
+
     return userOrgMembership;
   }
 
-  async removeMember(orgId: string, userId: string) {
+  async removeMember(orgId: string, userId: string, actorUserId: string) {
     const membership = await this.prismaService.orgMembership.findUnique({
       where: { user_id_org_id: { user_id: userId, org_id: orgId } },
       select: { orgRole: { select: { is_system: true, role_name: true } } },
@@ -167,6 +207,14 @@ export class OrganizationsService {
 
     await this.prismaService.orgMembership.delete({
       where: { user_id_org_id: { user_id: userId, org_id: orgId } },
+    });
+
+    await this.auditLogService.record({
+      eventType: AuditEventType.ORG_MEMBER_REMOVED,
+      actorUserId,
+      orgId,
+      targetType: 'User',
+      targetId: userId,
     });
 
     return { message: 'Member removed successfully' };

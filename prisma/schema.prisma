@@ -108,3 +108,26 @@ model OrgMembership {
   @@unique([user_id, orgRole_id])
   @@unique([user_id, org_id])
 }
+
+// Deliberately has no foreign keys - audit rows must survive deletion of the
+// entities they reference. `sequence` (not created_at) is the authoritative
+// hash-chain order, since timestamps can collide under concurrent writes.
+model AuditLog {
+  id            String   @id @default(uuid(7)) @db.Uuid
+  sequence      BigInt   @unique @default(autoincrement())
+  event_type    String
+  actor_user_id String?  @db.Uuid
+  org_id        String?  @db.Uuid
+  target_type   String?
+  target_id     String?
+  metadata      Json?
+  ip_address    String?  @db.Inet
+  user_agent    String?
+  prev_hash     String
+  entry_hash    String   @unique
+  created_at    DateTime @default(now()) @db.Timestamptz(6)
+
+  @@index([org_id])
+  @@index([actor_user_id])
+  @@index([sequence])
+}

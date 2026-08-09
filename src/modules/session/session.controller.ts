@@ -28,8 +28,14 @@ export class SessionController {
 
   @Patch(':sessionId')
   @UseGuards(AuthGuard)
-  async revokeSingleSession(@Param() params: RevokeSessionParamsDto) {
-    return await this.sessionService.revokeSingleSession(params.sessionId);
+  async revokeSingleSession(
+    @AuthUser() user: User,
+    @Param() params: RevokeSessionParamsDto,
+  ) {
+    return await this.sessionService.revokeSingleSession(
+      params.sessionId,
+      user.id,
+    );
   }
 
   @Patch('user/revoke-all')

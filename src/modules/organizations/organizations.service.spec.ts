@@ -4,6 +4,8 @@ import { PrismaService } from 'src/prisma/prisma.service';
 import { AuthorizationService } from '../authorization/authorization.service';
 import { BadRequestException } from '@nestjs/common';
 import { User } from 'src/generated/prisma/client';
+import { AuditLogService } from '../audit-log/audit-log.service';
+import { AuditEventType } from '../audit-log/constants/audit-event-types.constant';
 
 describe('OrganizationsService', () => {
   let service: OrganizationsService;
@@ -37,6 +39,10 @@ describe('OrganizationsService', () => {
     isOwnerRole: jest.fn(),
   };
 
+  const auditLogServiceMock = {
+    record: jest.fn(),
+  };
+
   const owner = { id: 'owner-id' } as User;
 
   beforeEach(async () => {
@@ -45,6 +51,7 @@ describe('OrganizationsService', () => {
         OrganizationsService,
         { provide: PrismaService, useValue: prismaMock },
         { provide: AuthorizationService, useValue: authorizationServiceMock },
+        { provide: AuditLogService, useValue: auditLogServiceMock },
       ],
     }).compile();
 
@@ -86,6 +93,13 @@ describe('OrganizationsService', () => {
           org_id: 'org-1',
         },
       });
+      expect(auditLogServiceMock.record).toHaveBeenCalledWith(
+        expect.objectContaining({
+          eventType: AuditEventType.ORG_CREATED,
+          actorUserId: 'owner-id',
+          orgId: 'org-1',
+        }),
+      );
     });
   });
 
@@ -110,6 +124,29 @@ describe('OrganizationsService', () => {
         where: { id: 'role-1', org_id: 'org-1' },
       });
       expect(result).toEqual({ id: 'membership-1' });
+      expect(auditLogServiceMock.record).not.toHaveBeenCalled();
+    });
+
+    it('records an ORG_MEMBER_ADDED audit event when an actor is given', async () => {
+      prismaMock.orgRole.findFirst.mockResolvedValue({ id: 'role-1' });
+      prismaMock.orgMembership.create.mockResolvedValue({ id: 'membership-1' });
+
+      await service.addUserToOrg(
+        'org-1',
+        'user-1',
+        'role-1',
+        undefined,
+        'admin-1',
+      );
+
+      expect(auditLogServiceMock.record).toHaveBeenCalledWith(
+        expect.objectContaining({
+          eventType: AuditEventType.ORG_MEMBER_ADDED,
+          actorUserId: 'admin-1',
+          orgId: 'org-1',
+          targetId: 'user-1',
+        }),
+      );
     });
   });
 
@@ -163,6 +200,14 @@ describe('OrganizationsService', () => {
       expect(txMock.orgMembership.delete).toHaveBeenCalledWith({
         where: { user_id_org_id: { user_id: owner.id, org_id: orgId } },
       });
+      expect(auditLogServiceMock.record).toHaveBeenCalledWith(
+        expect.objectContaining({
+          eventType: AuditEventType.ORG_OWNERSHIP_TRANSFERRED,
+          actorUserId: owner.id,
+          orgId,
+          targetId: transferee,
+        }),
+      );
     });
 
     it('demotes the transferor to the replacement role when one is given', async () => {
@@ -220,9 +265,9 @@ describe('OrganizationsService', () => {
     it('throws BadRequestException when the member does not exist', async () => {
       prismaMock.orgMembership.findUnique.mockResolvedValue(null);
 
-      await expect(service.removeMember('org-1', 'user-1')).rejects.toThrow(
-        BadRequestException,
-      );
+      await expect(
+        service.removeMember('org-1', 'user-1', 'admin-1'),
+      ).rejects.toThrow(BadRequestException);
     });
 
     it('throws BadRequestException when trying to remove the owner', async () => {
@@ -231,24 +276,32 @@ describe('OrganizationsService', () => {
       });
       authorizationServiceMock.isOwnerRole.mockReturnValue(true);
 
-      await expect(service.removeMember('org-1', 'user-1')).rejects.toThrow(
-        BadRequestException,
-      );
+      await expect(
+        service.removeMember('org-1', 'user-1', 'admin-1'),
+      ).rejects.toThrow(BadRequestException);
       expect(prismaMock.orgMembership.delete).not.toHaveBeenCalled();
     });
 
-    it('removes a non-owner member', async () => {
+    it('removes a non-owner member and records an audit event', async () => {
       prismaMock.orgMembership.findUnique.mockResolvedValue({
         orgRole: { is_system: false, role_name: 'Member' },
       });
       authorizationServiceMock.isOwnerRole.mockReturnValue(false);
 
       await expect(
-        service.removeMember('org-1', 'user-1'),
+        service.removeMember('org-1', 'user-1', 'admin-1'),
       ).resolves.toEqual({ message: 'Member removed successfully' });
       expect(prismaMock.orgMembership.delete).toHaveBeenCalledWith({
         where: { user_id_org_id: { user_id: 'user-1', org_id: 'org-1' } },
       });
+      expect(auditLogServiceMock.record).toHaveBeenCalledWith(
+        expect.objectContaining({
+          eventType: AuditEventType.ORG_MEMBER_REMOVED,
+          actorUserId: 'admin-1',
+          orgId: 'org-1',
+          targetId: 'user-1',
+        }),
+      );
     });
   });
 });

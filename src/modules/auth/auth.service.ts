@@ -17,6 +17,8 @@ import { UAParser } from 'ua-parser-js';
 import { SessionService } from '../session/session.service';
 import { UserSession } from 'src/generated/prisma/client';
 import { UserSessionWithUserDetails } from './types/express';
+import { AuditLogService } from '../audit-log/audit-log.service';
+import { AuditEventType } from '../audit-log/constants/audit-event-types.constant';
 
 @Injectable()
 export class AuthService {
@@ -26,6 +28,7 @@ export class AuthService {
     private readonly emailService: EmailService,
     private readonly jwtService: JwtService,
     private readonly sessionService: SessionService,
+    private readonly auditLogService: AuditLogService,
   ) {}
   async register(email: string, password: string) {
     try {
@@ -51,29 +54,42 @@ export class AuthService {
       const token = randomBytes(32).toString('hex');
       const tokenHash = createHash('sha256').update(token).digest('hex');
 
-      await this.prismaService.$transaction(async (prisma) => {
-        const user = await prisma.user.upsert({
-          where: { email },
-          update: {
-            email,
-            password_hash: passwordHash,
-          },
-          create: {
-            email,
-            password_hash: passwordHash,
-          },
-        });
+      const registeredUser = await this.prismaService.$transaction(
+        async (prisma) => {
+          const user = await prisma.user.upsert({
+            where: { email },
+            update: {
+              email,
+              password_hash: passwordHash,
+            },
+            create: {
+              email,
+              password_hash: passwordHash,
+            },
+          });
 
-        await prisma.magicLink.create({
-          data: {
-            user_id: user.id,
-            token_hash: tokenHash,
-            expires_at: new Date(Date.now() + 15 * 60 * 1000),
-            magic_link_type: MagicLinkType.USER_REGISTRATION,
-          },
-        });
-      });
+          await prisma.magicLink.create({
+            data: {
+              user_id: user.id,
+              token_hash: tokenHash,
+              expires_at: new Date(Date.now() + 15 * 60 * 1000),
+              magic_link_type: MagicLinkType.USER_REGISTRATION,
+            },
+          });
+
+          return user;
+        },
+      );
       await this.emailService.sendEmailVerificationLink(email, token);
+
+      await this.auditLogService.record({
+        eventType: AuditEventType.AUTH_REGISTER,
+        actorUserId: registeredUser.id,
+        targetType: 'User',
+        targetId: registeredUser.id,
+        metadata: { email },
+      });
+
       return { message: `User registration email sent to email id: ${email}` };
     } catch (error: unknown) {
       throw new InternalServerErrorException(error);
@@ -116,6 +132,13 @@ export class AuthService {
           magic_link_type: MagicLinkType.USER_REGISTRATION,
         },
       });
+
+      await this.auditLogService.record({
+        eventType: AuditEventType.AUTH_EMAIL_VERIFIED,
+        actorUserId: user.user_id,
+        targetType: 'User',
+        targetId: user.user_id,
+      });
     }
     return {
       message: `Email verified. Please Login using your email and password by going to the login page`,
@@ -123,6 +146,7 @@ export class AuthService {
   }
 
   async login(email: string, password: string, userAgent: string, ip: string) {
+    let resolvedUserId: string | null = null;
     try {
       const user = await this.prismaService.user.findUnique({
         where: { email },
@@ -132,6 +156,10 @@ export class AuthService {
           is_email_verified: true,
         },
       });
+
+      if (user) {
+        resolvedUserId = user.id;
+      }
 
       if (!user) {
         throw new NotFoundException('User not found. Please register first');
@@ -161,6 +189,15 @@ export class AuthService {
       const payload = { sub: user.id, email: email, sid: userSession.id };
       const accessToken = await this.jwtService.signAsync(payload);
 
+      await this.auditLogService.record({
+        eventType: AuditEventType.AUTH_LOGIN_SUCCESS,
+        actorUserId: user.id,
+        targetType: 'User',
+        targetId: user.id,
+        ipAddress: ip,
+        userAgent,
+      });
+
       return {
         access_token: accessToken,
         refresh_token: `${userSession.id}.${refreshToken}`,
@@ -170,6 +207,19 @@ export class AuthService {
         'Error during login',
         error instanceof Error ? error.stack : undefined,
       );
+
+      await this.auditLogService.record({
+        eventType: AuditEventType.AUTH_LOGIN_FAILURE,
+        actorUserId: resolvedUserId,
+        targetType: 'User',
+        targetId: resolvedUserId,
+        metadata: {
+          email,
+          reason: error instanceof Error ? error.message : 'Unknown error',
+        },
+        ipAddress: ip,
+        userAgent,
+      });
 
       throw error;
     }
@@ -210,6 +260,14 @@ export class AuthService {
       sid: newSession.id,
     };
     const accessToken = await this.jwtService.signAsync(payload);
+
+    await this.auditLogService.record({
+      eventType: AuditEventType.AUTH_TOKEN_REFRESHED,
+      actorUserId: newSession.user_id,
+      targetType: 'User',
+      targetId: newSession.user_id,
+    });
+
     return {
       access_token: accessToken,
       refresh_token: `${newSession.id}.${refreshToken}`,

@@ -61,7 +61,7 @@ describe('OrganizationsController', () => {
     );
   });
 
-  it('addMemberToOrg delegates with organizationId, userId and roleId', async () => {
+  it('addMemberToOrg delegates with organizationId, userId, roleId and the acting user', async () => {
     await controller.addMemberToOrg(
       user,
       { organizationId: 'org-1' },
@@ -72,11 +72,13 @@ describe('OrganizationsController', () => {
       'org-1',
       'user-2',
       'role-1',
+      undefined,
+      'user-1',
     );
   });
 
-  it('removeMember delegates with organizationId and userId', async () => {
-    await controller.removeMember({
+  it('removeMember delegates with organizationId, userId and the acting user', async () => {
+    await controller.removeMember(user, {
       organizationId: 'org-1',
       userId: 'user-2',
     });
@@ -84,6 +86,7 @@ describe('OrganizationsController', () => {
     expect(organizationsServiceMock.removeMember).toHaveBeenCalledWith(
       'org-1',
       'user-2',
+      'user-1',
     );
   });
 
@@ -102,8 +105,9 @@ describe('OrganizationsController', () => {
     );
   });
 
-  it('createRole delegates org id, role name, permission ids and parent role id', async () => {
+  it('createRole delegates org id, role name, permission ids, parent role id and the acting user', async () => {
     await controller.createRole(
+      user,
       { organizationId: 'org-1' },
       { roleName: 'Editor', permissionIds: ['perm-1'], parentRoleId: 'role-0' },
     );
@@ -114,26 +118,36 @@ describe('OrganizationsController', () => {
       ['perm-1'],
       undefined,
       'role-0',
+      'user-1',
     );
   });
 
-  it('updateRole delegates org id, role id and the update payload', async () => {
+  it('updateRole delegates org id, role id, the update payload and the acting user', async () => {
     const payload = { roleName: 'New name' };
-    await controller.updateRole({ organizationId: 'org-1', roleId: 'role-1' }, payload);
+    await controller.updateRole(
+      user,
+      { organizationId: 'org-1', roleId: 'role-1' },
+      payload,
+    );
 
     expect(authorizationServiceMock.updateRole).toHaveBeenCalledWith(
       'org-1',
       'role-1',
       payload,
+      'user-1',
     );
   });
 
-  it('deleteRole delegates org id and role id', async () => {
-    await controller.deleteRole({ organizationId: 'org-1', roleId: 'role-1' });
+  it('deleteRole delegates org id, role id and the acting user', async () => {
+    await controller.deleteRole(user, {
+      organizationId: 'org-1',
+      roleId: 'role-1',
+    });
 
     expect(authorizationServiceMock.deleteRole).toHaveBeenCalledWith(
       'org-1',
       'role-1',
+      'user-1',
     );
   });
 

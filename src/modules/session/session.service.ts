@@ -10,10 +10,15 @@ import { createHash, randomBytes } from 'node:crypto';
 import { PrismaClientKnownRequestError } from 'src/generated/prisma/internal/prismaNamespace';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { v7 as uuidv7 } from 'uuid';
+import { AuditLogService } from '../audit-log/audit-log.service';
+import { AuditEventType } from '../audit-log/constants/audit-event-types.constant';
 @Injectable()
 export class SessionService {
   private readonly logger = new Logger(SessionService.name);
-  constructor(private readonly prismaService: PrismaService) {}
+  constructor(
+    private readonly prismaService: PrismaService,
+    private readonly auditLogService: AuditLogService,
+  ) {}
 
   async createUserSession(sessionData: {
     userId: string;
@@ -137,12 +142,20 @@ export class SessionService {
 
   /** Revokes a single session
    * @param sessionId string
+   * @param actorUserId id of the user performing the revocation, for audit purposes
    */
-  async revokeSingleSession(sessionId: string) {
+  async revokeSingleSession(sessionId: string, actorUserId?: string) {
     try {
       await this.prismaService.userSession.update({
         where: { id: sessionId },
         data: { revoked_at: new Date() },
+      });
+
+      await this.auditLogService.record({
+        eventType: AuditEventType.SESSION_REVOKED,
+        actorUserId,
+        targetType: 'UserSession',
+        targetId: sessionId,
       });
 
       return { message: 'User session revoked' };
@@ -193,6 +206,14 @@ export class SessionService {
     if (result.count === 0) {
       throw new NotFoundException('No Sessions Found');
     }
+
+    await this.auditLogService.record({
+      eventType: AuditEventType.SESSION_ALL_REVOKED,
+      actorUserId: userId,
+      targetType: 'User',
+      targetId: userId,
+      metadata: { revokedCount: result.count },
+    });
 
     return { message: `${result.count} sessions revoked` };
   }
