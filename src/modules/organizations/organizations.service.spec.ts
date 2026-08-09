@@ -114,6 +114,21 @@ describe('OrganizationsService', () => {
       expect(prismaMock.orgMembership.create).not.toHaveBeenCalled();
     });
 
+    it('rejects a role that genuinely exists but belongs to a different org (cross-tenant attack)', async () => {
+      // The role id is real - it's just scoped to org-B, not org-A. findFirst({id, org_id})
+      // returns null because the composite match fails, exactly as it would for a fabricated id.
+      prismaMock.orgRole.findFirst.mockResolvedValue(null);
+
+      await expect(
+        service.addUserToOrg('org-A', 'user-1', 'role-that-belongs-to-org-B'),
+      ).rejects.toThrow(BadRequestException);
+
+      expect(prismaMock.orgRole.findFirst).toHaveBeenCalledWith({
+        where: { id: 'role-that-belongs-to-org-B', org_id: 'org-A' },
+      });
+      expect(prismaMock.orgMembership.create).not.toHaveBeenCalled();
+    });
+
     it('creates the membership when the role belongs to the org', async () => {
       prismaMock.orgRole.findFirst.mockResolvedValue({ id: 'role-1' });
       prismaMock.orgMembership.create.mockResolvedValue({ id: 'membership-1' });

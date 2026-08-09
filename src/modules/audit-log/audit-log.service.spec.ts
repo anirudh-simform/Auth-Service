@@ -212,6 +212,27 @@ describe('AuditLogService', () => {
   });
 
   describe('listForOrg', () => {
+    it('relies on the org_id filter, not incidental ordering, to keep tenants apart', async () => {
+      // Simulates the real query: Prisma only ever returns rows matching the where clause,
+      // so if the org filter were ever dropped, this would return org-B's rows too.
+      prismaMock.auditLog.findMany.mockImplementation(({ where }) =>
+        Promise.resolve(
+          [
+            { id: 'log-a1', org_id: 'org-A' },
+            { id: 'log-b1', org_id: 'org-B' },
+            { id: 'log-a2', org_id: 'org-A' },
+          ].filter((row) => row.org_id === where.org_id),
+        ),
+      );
+
+      const result = await service.listForOrg('org-A', {});
+
+      expect(result).toEqual([
+        { id: 'log-a1', org_id: 'org-A' },
+        { id: 'log-a2', org_id: 'org-A' },
+      ]);
+    });
+
     it('applies default pagination', async () => {
       prismaMock.auditLog.findMany.mockResolvedValue([]);
 

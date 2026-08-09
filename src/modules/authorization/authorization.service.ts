@@ -199,8 +199,15 @@ export class AuthorizationService {
   /**
    * Walks the parent_role_id chain (own permissions + every ancestor's),
    * with a visited-set guard so a corrupted/cyclic chain can't loop forever.
+   * Scoped to `orgId` defensively: every writer of parent_role_id already
+   * validates the parent belongs to the same org before persisting it, but
+   * scoping the traversal too means a future writer that skips that check
+   * still can't create a cross-org privilege-escalation path silently.
    */
-  async getEffectivePermissionKeys(orgRoleId: string): Promise<Set<string>> {
+  async getEffectivePermissionKeys(
+    orgRoleId: string,
+    orgId: string,
+  ): Promise<Set<string>> {
     const permissionKeys = new Set<string>();
     const visitedRoleIds = new Set<string>();
     let currentRoleId: string | null = orgRoleId;
@@ -208,8 +215,8 @@ export class AuthorizationService {
     while (currentRoleId !== null && !visitedRoleIds.has(currentRoleId)) {
       visitedRoleIds.add(currentRoleId);
 
-      const role = await this.prismaService.orgRole.findUnique({
-        where: { id: currentRoleId },
+      const role = await this.prismaService.orgRole.findFirst({
+        where: { id: currentRoleId, org_id: orgId },
         select: {
           parent_role_id: true,
           orgRolePermissions: {
@@ -242,6 +249,7 @@ export class AuthorizationService {
 
     const effectivePermissionKeys = await this.getEffectivePermissionKeys(
       membership.orgRole_id,
+      orgId,
     );
 
     if (!effectivePermissionKeys.has(permissionKey)) {
@@ -342,8 +350,13 @@ export class AuthorizationService {
   /**
    * Walks the ancestor chain starting at `candidateParentId` and rejects if
    * `roleId` appears in it - that would make `roleId` its own descendant's ancestor.
+   * Scoped to `orgId` for the same defense-in-depth reason as getEffectivePermissionKeys.
    */
-  private async wouldCreateCycle(candidateParentId: string, roleId: string) {
+  private async wouldCreateCycle(
+    candidateParentId: string,
+    roleId: string,
+    orgId: string,
+  ) {
     const visitedRoleIds = new Set<string>();
     let currentRoleId: string | null = candidateParentId;
 
@@ -353,8 +366,8 @@ export class AuthorizationService {
       visitedRoleIds.add(currentRoleId);
 
       const role: { parent_role_id: string | null } | null =
-        await this.prismaService.orgRole.findUnique({
-          where: { id: currentRoleId },
+        await this.prismaService.orgRole.findFirst({
+          where: { id: currentRoleId, org_id: orgId },
           select: { parent_role_id: true },
         });
 
@@ -382,7 +395,7 @@ export class AuthorizationService {
       );
     }
 
-    if (await this.wouldCreateCycle(parentRoleId, roleId)) {
+    if (await this.wouldCreateCycle(parentRoleId, roleId, orgId)) {
       throw new BadRequestException(
         'RoleUpdateError: Assigning this parent would create a role hierarchy cycle',
       );

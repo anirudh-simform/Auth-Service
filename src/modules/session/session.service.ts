@@ -140,26 +140,34 @@ export class SessionService {
     }
   }
 
-  /** Revokes a single session
+  /** Revokes a single session, scoped to the caller so a session can only be
+   * revoked by the user who owns it.
    * @param sessionId string
-   * @param actorUserId id of the user performing the revocation, for audit purposes
+   * @param callerId id of the user performing the revocation - also the ownership check and audit actor
    */
-  async revokeSingleSession(sessionId: string, actorUserId?: string) {
+  async revokeSingleSession(sessionId: string, callerId: string) {
     try {
-      await this.prismaService.userSession.update({
-        where: { id: sessionId },
+      const result = await this.prismaService.userSession.updateMany({
+        where: { id: sessionId, user_id: callerId },
         data: { revoked_at: new Date() },
       });
 
+      if (result.count === 0) {
+        throw new NotFoundException('Session not found');
+      }
+
       await this.auditLogService.record({
         eventType: AuditEventType.SESSION_REVOKED,
-        actorUserId,
+        actorUserId: callerId,
         targetType: 'UserSession',
         targetId: sessionId,
       });
 
       return { message: 'User session revoked' };
     } catch (error: unknown) {
+      if (error instanceof NotFoundException) {
+        throw error;
+      }
       if (
         error instanceof PrismaClientKnownRequestError &&
         error.code === 'P2001'
@@ -182,12 +190,14 @@ export class SessionService {
     }
   }
 
-  /** Fetches a paginated list of all sessions
+  /** Fetches a paginated list of sessions belonging to the given user
+   * @param userId id of the user whose sessions are being listed
    * @param [limit=10] number of records to include in the final response, default is 10
    * @param [page=1] page number used to calculate offset, default is 1
    */
-  async getAllSessions(page: number = 1, limit: number = 10) {
+  async getAllSessions(userId: string, page: number = 1, limit: number = 10) {
     return await this.prismaService.userSession.findMany({
+      where: { user_id: userId },
       skip: (page - 1) * limit,
       take: limit,
       orderBy: { updated_at: 'desc' },

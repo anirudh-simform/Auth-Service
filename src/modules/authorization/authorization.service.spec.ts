@@ -176,17 +176,20 @@ describe('AuthorizationService', () => {
 
   describe('getEffectivePermissionKeys', () => {
     it('returns just the role own permissions when it has no parent', async () => {
-      prismaMock.orgRole.findUnique.mockResolvedValueOnce({
+      prismaMock.orgRole.findFirst.mockResolvedValueOnce({
         parent_role_id: null,
         orgRolePermissions: [{ permissions: { key: 'member.invite' } }],
       });
 
-      const permissions = await service.getEffectivePermissionKeys('role-1');
+      const permissions = await service.getEffectivePermissionKeys(
+        'role-1',
+        'org-1',
+      );
       expect(permissions).toEqual(new Set(['member.invite']));
     });
 
     it('unions permissions across a multi-level parent chain', async () => {
-      prismaMock.orgRole.findUnique
+      prismaMock.orgRole.findFirst
         .mockResolvedValueOnce({
           parent_role_id: 'role-parent',
           orgRolePermissions: [{ permissions: { key: 'member.invite' } }],
@@ -200,15 +203,18 @@ describe('AuthorizationService', () => {
           orgRolePermissions: [{ permissions: { key: 'role.create' } }],
         });
 
-      const permissions = await service.getEffectivePermissionKeys('role-1');
+      const permissions = await service.getEffectivePermissionKeys(
+        'role-1',
+        'org-1',
+      );
       expect(permissions).toEqual(
         new Set(['member.invite', 'organization.read', 'role.create']),
       );
-      expect(prismaMock.orgRole.findUnique).toHaveBeenCalledTimes(3);
+      expect(prismaMock.orgRole.findFirst).toHaveBeenCalledTimes(3);
     });
 
     it('terminates instead of looping forever on a cyclic parent chain', async () => {
-      prismaMock.orgRole.findUnique
+      prismaMock.orgRole.findFirst
         .mockResolvedValueOnce({
           parent_role_id: 'role-2',
           orgRolePermissions: [{ permissions: { key: 'a' } }],
@@ -218,9 +224,27 @@ describe('AuthorizationService', () => {
           orgRolePermissions: [{ permissions: { key: 'b' } }],
         });
 
-      const permissions = await service.getEffectivePermissionKeys('role-1');
+      const permissions = await service.getEffectivePermissionKeys(
+        'role-1',
+        'org-1',
+      );
       expect(permissions).toEqual(new Set(['a', 'b']));
-      expect(prismaMock.orgRole.findUnique).toHaveBeenCalledTimes(2);
+      expect(prismaMock.orgRole.findFirst).toHaveBeenCalledTimes(2);
+    });
+
+    it('does not cross into another org: a role id that exists but belongs to a different org resolves as not-found', async () => {
+      // findFirst({ id, org_id }) returns null because role-1 belongs to org-B, not org-A
+      prismaMock.orgRole.findFirst.mockResolvedValueOnce(null);
+
+      const permissions = await service.getEffectivePermissionKeys(
+        'role-1',
+        'org-A',
+      );
+      expect(permissions).toEqual(new Set());
+      expect(prismaMock.orgRole.findFirst).toHaveBeenCalledWith({
+        where: { id: 'role-1', org_id: 'org-A' },
+        select: expect.anything(),
+      });
     });
   });
 
@@ -237,7 +261,7 @@ describe('AuthorizationService', () => {
       prismaMock.orgMembership.findUnique.mockResolvedValue({
         orgRole_id: 'role-1',
       });
-      prismaMock.orgRole.findUnique.mockResolvedValue({
+      prismaMock.orgRole.findFirst.mockResolvedValue({
         parent_role_id: null,
         orgRolePermissions: [{ permissions: { key: 'organization.read' } }],
       });
@@ -251,7 +275,7 @@ describe('AuthorizationService', () => {
       prismaMock.orgMembership.findUnique.mockResolvedValue({
         orgRole_id: 'role-1',
       });
-      prismaMock.orgRole.findUnique.mockResolvedValue({
+      prismaMock.orgRole.findFirst.mockResolvedValue({
         parent_role_id: null,
         orgRolePermissions: [{ permissions: { key: 'organization.read' } }],
       });
@@ -259,6 +283,24 @@ describe('AuthorizationService', () => {
       await expect(
         service.isUserAuthorized('user-1', 'org-1', 'organization.read'),
       ).resolves.toBe(true);
+    });
+
+    it('rejects a membership whose role belongs to a different org than requested (cross-org attack)', async () => {
+      // membership row itself is looked up with a composite user_id_org_id key scoped to
+      // the requested org, but this proves the role-permission resolution is also org-scoped:
+      // even if orgRole_id pointed at a role from another org, it would resolve to no permissions.
+      prismaMock.orgMembership.findUnique.mockResolvedValue({
+        orgRole_id: 'role-from-org-B',
+      });
+      prismaMock.orgRole.findFirst.mockResolvedValue(null);
+
+      await expect(
+        service.isUserAuthorized('user-1', 'org-A', 'organization.read'),
+      ).rejects.toThrow(ForbiddenException);
+      expect(prismaMock.orgRole.findFirst).toHaveBeenCalledWith({
+        where: { id: 'role-from-org-B', org_id: 'org-A' },
+        select: expect.anything(),
+      });
     });
   });
 
@@ -415,9 +457,9 @@ describe('AuthorizationService', () => {
     });
 
     it('throws BadRequestException when assigning the parent would create a cycle', async () => {
-      prismaMock.orgRole.findFirst.mockResolvedValue({ id: 'role-parent' });
-      // walking up from role-parent reaches role-1, which is the role being updated
-      prismaMock.orgRole.findUnique
+      prismaMock.orgRole.findFirst
+        .mockResolvedValueOnce({ id: 'role-parent' })
+        // walking up from role-parent reaches role-1, which is the role being updated
         .mockResolvedValueOnce({ parent_role_id: 'role-1' })
         .mockResolvedValueOnce({ parent_role_id: null });
 
@@ -427,14 +469,27 @@ describe('AuthorizationService', () => {
     });
 
     it('returns the parent role id when valid', async () => {
-      prismaMock.orgRole.findFirst.mockResolvedValue({ id: 'role-parent' });
-      prismaMock.orgRole.findUnique.mockResolvedValueOnce({
-        parent_role_id: null,
-      });
+      prismaMock.orgRole.findFirst
+        .mockResolvedValueOnce({ id: 'role-parent' })
+        .mockResolvedValueOnce({ parent_role_id: null });
 
       await expect(
         service.setRoleParent('org-1', 'role-1', 'role-parent'),
       ).resolves.toBe('role-parent');
+    });
+
+    it('cannot walk into another org: the cycle-check traversal is scoped to orgId', async () => {
+      prismaMock.orgRole.findFirst
+        .mockResolvedValueOnce({ id: 'role-parent' }) // parent role lookup succeeds (in org-A)
+        .mockResolvedValueOnce(null); // but the ancestor walk finds nothing scoped to org-A
+
+      await expect(
+        service.setRoleParent('org-A', 'role-1', 'role-parent'),
+      ).resolves.toBe('role-parent');
+      expect(prismaMock.orgRole.findFirst).toHaveBeenLastCalledWith({
+        where: { id: 'role-parent', org_id: 'org-A' },
+        select: { parent_role_id: true },
+      });
     });
   });
 

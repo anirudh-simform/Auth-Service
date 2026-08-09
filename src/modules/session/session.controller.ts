@@ -19,8 +19,12 @@ export class SessionController {
 
   @Get()
   @UseGuards(AuthGuard)
-  async getAllSessions(@Query() queryParams: PaginationQueryParamsDto) {
+  async getAllSessions(
+    @AuthUser() user: User,
+    @Query() queryParams: PaginationQueryParamsDto,
+  ) {
     return await this.sessionService.getAllSessions(
+      user.id,
       queryParams.page,
       queryParams.limit,
     );
