@@ -7,11 +7,13 @@ import { config } from 'src/config';
 import { AuthGuard } from './guards/auth/auth.guard';
 import { SessionModule } from '../session/session.module';
 import { RefreshTokenGuard } from './guards/refresh-token/refresh-token.guard';
+import { AuthorizationModule } from '../authorization/authorization.module';
 
 @Module({
   imports: [
     EmailModule,
     SessionModule,
+    AuthorizationModule,
     JwtModule.register({
       global: true,
       secret: config.ACCESS_TOKEN_SECRET,

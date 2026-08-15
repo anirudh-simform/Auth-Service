@@ -15,7 +15,7 @@ const envSchema = z.object({
   EMAIL_VERIFICATION_BASE_URL: z.string(),
 
   // JWT Secrets
-  ACCESS_TOKEN_SECRET: z.string().default('1d'),
+  ACCESS_TOKEN_SECRET: z.string(),
   REFRESH_TOKEN_SECRET: z.string(),
 
   REFRESH_TOKEN_EXPIRATION: z.string().default('7d'),

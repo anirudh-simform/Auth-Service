@@ -7,6 +7,7 @@ import { stableStringify } from './utils/stable-stringify.util';
 
 const GENESIS_HASH = '';
 const MAX_WRITE_ATTEMPTS = 3;
+const ACTOR_EXPORT_LIMIT = 500;
 
 export interface RecordAuditEventParams {
   eventType: AuditEventType;
@@ -166,6 +167,19 @@ export class AuditLogService {
       orderBy: { sequence: 'desc' },
       skip: (page - 1) * limit,
       take: limit,
+    });
+  }
+
+  /**
+   * Recent events where the given user was the actor, for GDPR data-export
+   * purposes. Capped at ACTOR_EXPORT_LIMIT (most recent first) rather than
+   * returning the full history unbounded.
+   */
+  async listForActor(userId: string) {
+    return await this.prismaService.auditLog.findMany({
+      where: { actor_user_id: userId },
+      orderBy: { sequence: 'desc' },
+      take: ACTOR_EXPORT_LIMIT,
     });
   }
 

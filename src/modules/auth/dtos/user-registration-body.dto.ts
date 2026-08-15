@@ -1,4 +1,4 @@
-import { IsEmail, IsString, MinLength } from 'class-validator';
+import { Equals, IsBoolean, IsEmail, IsString, MinLength } from 'class-validator';
 export class UserRegistrationBodyDto {
   @IsEmail()
   email: string;
@@ -6,4 +6,10 @@ export class UserRegistrationBodyDto {
   @IsString()
   @MinLength(1)
   password: string;
+
+  @IsBoolean()
+  @Equals(true, {
+    message: 'You must accept the terms and conditions to register',
+  })
+  termsAccepted: boolean;
 }

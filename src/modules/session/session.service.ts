@@ -25,7 +25,6 @@ export class SessionService {
     userAgent: string;
     userIp: string;
   }) {
-    console.log('sessionData', sessionData);
     try {
       const sessionId = uuidv7();
 

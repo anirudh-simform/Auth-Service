@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   Ip,
   Post,
@@ -12,6 +13,7 @@ import { AuthService } from './auth.service';
 import { UserRegistrationBodyDto } from './dtos/user-registration-body.dto';
 import { VerifyEmailQueryParamsDto } from './dtos/verify-email-query-params.dto';
 import { UserLoginBodyDto } from './dtos/user-login-body.dto';
+import { DeleteAccountBodyDto } from './dtos/delete-account-body.dto';
 import { AuthGuard } from './guards/auth/auth.guard';
 import { type User } from 'src/generated/prisma/client';
 import { AuthUser } from './decorators/auth-user.decorator';
@@ -65,11 +67,25 @@ export class AuthController {
     return await this.authService.me(user.id);
   }
 
+  @Get('me/export')
+  @UseGuards(AuthGuard)
+  async exportMyData(@AuthUser() user: User) {
+    return await this.authService.exportMyData(user.id);
+  }
+
+  @Delete('me')
+  @UseGuards(AuthGuard)
+  async deleteAccount(
+    @AuthUser() user: User,
+    @Body() payload: DeleteAccountBodyDto,
+  ) {
+    return await this.authService.deleteAccount(user.id, payload.password);
+  }
+
   @Get('refresh')
   @UseGuards(RefreshTokenGuard)
   @Throttle(AUTH_THROTTLE)
   async refresh(@UserSession() userSession: UserSessionWithUserDetails) {
-    console.log(userSession);
     return await this.authService.refresh(userSession);
   }
 }

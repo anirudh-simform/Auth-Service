@@ -259,4 +259,33 @@ describe('AuditLogService', () => {
       });
     });
   });
+
+  describe('listForActor', () => {
+    it('filters by actor_user_id, most recent first, capped at the export limit', async () => {
+      prismaMock.auditLog.findMany.mockResolvedValue([]);
+
+      await service.listForActor('user-1');
+
+      expect(prismaMock.auditLog.findMany).toHaveBeenCalledWith({
+        where: { actor_user_id: 'user-1' },
+        orderBy: { sequence: 'desc' },
+        take: 500,
+      });
+    });
+
+    it('never returns another user’s events', async () => {
+      prismaMock.auditLog.findMany.mockImplementation(({ where }) =>
+        Promise.resolve(
+          [
+            { id: 'log-1', actor_user_id: 'user-1' },
+            { id: 'log-2', actor_user_id: 'user-2' },
+          ].filter((row) => row.actor_user_id === where.actor_user_id),
+        ),
+      );
+
+      const result = await service.listForActor('user-1');
+
+      expect(result).toEqual([{ id: 'log-1', actor_user_id: 'user-1' }]);
+    });
+  });
 });

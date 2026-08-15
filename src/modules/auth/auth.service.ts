@@ -19,6 +19,9 @@ import { UserSession } from 'src/generated/prisma/client';
 import { UserSessionWithUserDetails } from './types/express';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { AuditEventType } from '../audit-log/constants/audit-event-types.constant';
+import { AuthorizationService } from '../authorization/authorization.service';
+
+const SESSION_EXPORT_LIMIT = 500;
 
 @Injectable()
 export class AuthService {
@@ -29,6 +32,7 @@ export class AuthService {
     private readonly jwtService: JwtService,
     private readonly sessionService: SessionService,
     private readonly auditLogService: AuditLogService,
+    private readonly authorizationService: AuthorizationService,
   ) {}
   async register(email: string, password: string) {
     try {
@@ -61,10 +65,12 @@ export class AuthService {
             update: {
               email,
               password_hash: passwordHash,
+              terms_accepted_at: new Date(),
             },
             create: {
               email,
               password_hash: passwordHash,
+              terms_accepted_at: new Date(),
             },
           });
 
@@ -271,6 +277,106 @@ export class AuthService {
     return {
       access_token: accessToken,
       refresh_token: `${newSession.id}.${refreshToken}`,
+    };
+  }
+
+  /**
+   * GDPR Art. 17 (right to erasure). Requires the caller to re-confirm their
+   * password - a destructive, irreversible action shouldn't succeed off a
+   * bare session token alone. Blocks deletion if the user is an org Owner,
+   * since deleting them would orphan the org.
+   */
+  async deleteAccount(userId: string, password: string) {
+    const user = await this.prismaService.user.findUnique({
+      where: { id: userId },
+      select: { password_hash: true },
+    });
+
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+
+    const isValidPassword = await argon2.verify(user.password_hash, password);
+    if (!isValidPassword) {
+      throw new BadRequestException('Wrong password');
+    }
+
+    const memberships = await this.prismaService.orgMembership.findMany({
+      where: { user_id: userId },
+      select: { orgRole: { select: { is_system: true, role_name: true } } },
+    });
+
+    if (
+      memberships.some((membership) =>
+        this.authorizationService.isOwnerRole(membership.orgRole),
+      )
+    ) {
+      throw new ConflictException(
+        'AccountDeletionError: Transfer ownership of your organizations before deleting your account',
+      );
+    }
+
+    await this.prismaService.$transaction(async (tx) => {
+      await tx.magicLink.deleteMany({ where: { user_id: userId } });
+      await tx.userSession.deleteMany({ where: { user_id: userId } });
+      await tx.orgMembership.deleteMany({ where: { user_id: userId } });
+      await tx.user.delete({ where: { id: userId } });
+    });
+
+    await this.auditLogService.record({
+      eventType: AuditEventType.USER_ACCOUNT_DELETED,
+      actorUserId: userId,
+      targetType: 'User',
+      targetId: userId,
+    });
+
+    return { message: 'Account deleted successfully' };
+  }
+
+  /**
+   * GDPR Art. 15/20 (right to access & data portability). Aggregates the
+   * personal data this service holds about the user into a single export.
+   */
+  async exportMyData(userId: string) {
+    const [user, memberships, sessions, auditEvents] = await Promise.all([
+      this.prismaService.user.findUnique({
+        where: { id: userId },
+        omit: { password_hash: true },
+      }),
+      this.prismaService.orgMembership.findMany({
+        where: { user_id: userId },
+        select: {
+          org: { select: { id: true, name: true } },
+          orgRole: { select: { role_name: true } },
+        },
+      }),
+      this.sessionService.getAllSessions(userId, 1, SESSION_EXPORT_LIMIT),
+      this.auditLogService.listForActor(userId),
+    ]);
+
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+
+    await this.auditLogService.record({
+      eventType: AuditEventType.USER_DATA_EXPORTED,
+      actorUserId: userId,
+      targetType: 'User',
+      targetId: userId,
+    });
+
+    return {
+      profile: user,
+      organizationMemberships: memberships.map((membership) => ({
+        organizationId: membership.org.id,
+        organizationName: membership.org.name,
+        roleName: membership.orgRole.role_name,
+      })),
+      // refresh_token_hash is never exported, even hashed - it's a live credential
+      sessions: sessions.map(
+        ({ refresh_token_hash: _refreshTokenHash, ...session }) => session,
+      ),
+      auditEvents,
     };
   }
 }
