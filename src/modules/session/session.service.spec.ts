@@ -82,6 +82,24 @@ describe('SessionService', () => {
     });
   });
 
+  describe('invalidateSession', () => {
+    it('resolves without throwing when the session exists', async () => {
+      prismaMock.userSession.updateMany.mockResolvedValue({ count: 1 });
+
+      await expect(
+        service.invalidateSession('session-1'),
+      ).resolves.toBeUndefined();
+    });
+
+    it('surfaces NotFoundException as-is instead of wrapping it in a 500', async () => {
+      prismaMock.userSession.updateMany.mockResolvedValue({ count: 0 });
+
+      await expect(service.invalidateSession('missing-session')).rejects.toThrow(
+        NotFoundException,
+      );
+    });
+  });
+
   describe('getAllSessions', () => {
     it('scopes the listing to the requesting user only', async () => {
       prismaMock.userSession.findMany.mockResolvedValue([]);

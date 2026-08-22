@@ -37,6 +37,8 @@ export class OrganizationsService {
         targetId: org.id,
         metadata: { orgName },
       });
+
+      return org;
     } catch (error: unknown) {
       this.logger.error(
         'OraganizationCreationError: ',
@@ -139,6 +141,8 @@ export class OrganizationsService {
           replacementOrgRoleId: transferorReplacementOrgRoleId ?? null,
         },
       });
+
+      return { message: 'Ownership transferred successfully' };
     } catch (error: unknown) {
       if (error instanceof BadRequestException) throw error;
       this.logger.error(error instanceof Error ? error.stack : undefined);

@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   CanActivate,
   ExecutionContext,
   ForbiddenException,
@@ -6,6 +7,7 @@ import {
   InternalServerErrorException,
   Logger,
 } from '@nestjs/common';
+import { isUUID } from 'class-validator';
 import {
   Permission,
   SystemPermissions,
@@ -24,6 +26,14 @@ export class AuthorizationGuard implements CanActivate {
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const request = context.switchToHttp().getRequest<Request>();
     const orgId = request['params']['organizationId'];
+
+    // Guards run before DTO validation pipes, so a malformed :organizationId
+    // route param would otherwise reach Prisma as a raw string and surface
+    // as a 500 (invalid UUID input) instead of a clean 400.
+    if (!isUUID(orgId)) {
+      throw new BadRequestException('organizationId must be a valid UUID');
+    }
+
     const permissionKey = this.reflector.getAllAndOverride(Permission, [
       context.getHandler(),
       context.getClass(),

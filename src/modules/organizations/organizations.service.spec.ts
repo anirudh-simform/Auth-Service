@@ -77,8 +77,9 @@ describe('OrganizationsService', () => {
       txMock.orgRole.findFirst.mockResolvedValue({ id: 'owner-role-1' });
       txMock.orgMembership.create.mockResolvedValue({});
 
-      await service.createOrganization(owner, 'Acme');
+      const result = await service.createOrganization(owner, 'Acme');
 
+      expect(result).toEqual({ id: 'org-1' });
       expect(txMock.organization.create).toHaveBeenCalledWith({
         data: { name: 'Acme' },
       });

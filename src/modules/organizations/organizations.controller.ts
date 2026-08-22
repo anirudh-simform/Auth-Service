@@ -41,7 +41,10 @@ export class OrganizationsController {
     @AuthUser() user: User,
     @Body() payload: CreateOrganizationDto,
   ) {
-    await this.organizationService.createOrganization(user, payload.orgName);
+    return await this.organizationService.createOrganization(
+      user,
+      payload.orgName,
+    );
   }
 
   @Post(':organizationId/members')
@@ -52,7 +55,7 @@ export class OrganizationsController {
     @Param() params: OrganizationIdParam,
     @Body() payload: AddMemberToOrgPayloadDto,
   ) {
-    await this.organizationService.addUserToOrg(
+    return await this.organizationService.addUserToOrg(
       params.organizationId,
       payload.userId,
       payload.roleId,
@@ -92,7 +95,7 @@ export class OrganizationsController {
     @Param() params: OrganizationIdParam,
     @Body() payload: TransferOrgOwnershipPayloadDto,
   ) {
-    await this.organizationService.transferOrgOwnership(
+    return await this.organizationService.transferOrgOwnership(
       params.organizationId,
       payload.tranfereeId,
       user,

@@ -162,12 +162,14 @@ export class AuditLogService {
     const page = pagination.page ?? 1;
     const limit = pagination.limit ?? 20;
 
-    return await this.prismaService.auditLog.findMany({
+    const rows = await this.prismaService.auditLog.findMany({
       where: { org_id: orgId },
       orderBy: { sequence: 'desc' },
       skip: (page - 1) * limit,
       take: limit,
     });
+
+    return rows.map(this.serializeSequence);
   }
 
   /**
@@ -176,11 +178,18 @@ export class AuditLogService {
    * returning the full history unbounded.
    */
   async listForActor(userId: string) {
-    return await this.prismaService.auditLog.findMany({
+    const rows = await this.prismaService.auditLog.findMany({
       where: { actor_user_id: userId },
       orderBy: { sequence: 'desc' },
       take: ACTOR_EXPORT_LIMIT,
     });
+
+    return rows.map(this.serializeSequence);
+  }
+
+  // BigInt isn't JSON-serializable - Express's res.json() throws on it untouched
+  private serializeSequence<T extends { sequence: bigint }>(row: T) {
+    return { ...row, sequence: row.sequence.toString() };
   }
 
   private computeHash(input: HashInput): string {

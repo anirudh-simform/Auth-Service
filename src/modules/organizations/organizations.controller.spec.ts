@@ -52,17 +52,28 @@ describe('OrganizationsController', () => {
     expect(controller).toBeDefined();
   });
 
-  it('createOrganization passes the authenticated user and org name through', async () => {
-    await controller.createOrganization(user, { orgName: 'Acme' });
+  it('createOrganization passes the authenticated user and org name through, and returns the created org', async () => {
+    organizationsServiceMock.createOrganization.mockResolvedValue({
+      id: 'org-1',
+    });
+
+    const result = await controller.createOrganization(user, {
+      orgName: 'Acme',
+    });
 
     expect(organizationsServiceMock.createOrganization).toHaveBeenCalledWith(
       user,
       'Acme',
     );
+    expect(result).toEqual({ id: 'org-1' });
   });
 
-  it('addMemberToOrg delegates with organizationId, userId, roleId and the acting user', async () => {
-    await controller.addMemberToOrg(
+  it('addMemberToOrg delegates with organizationId, userId, roleId and the acting user, and returns the membership', async () => {
+    organizationsServiceMock.addUserToOrg.mockResolvedValue({
+      id: 'membership-1',
+    });
+
+    const result = await controller.addMemberToOrg(
       user,
       { organizationId: 'org-1' },
       { userId: 'user-2', roleId: 'role-1' },
@@ -75,6 +86,7 @@ describe('OrganizationsController', () => {
       undefined,
       'user-1',
     );
+    expect(result).toEqual({ id: 'membership-1' });
   });
 
   it('removeMember delegates with organizationId, userId and the acting user', async () => {
@@ -90,8 +102,12 @@ describe('OrganizationsController', () => {
     );
   });
 
-  it('transferOrgOwnership delegates with the authenticated user as transferor', async () => {
-    await controller.transferOrgOwnership(
+  it('transferOrgOwnership delegates with the authenticated user as transferor, and returns the result', async () => {
+    organizationsServiceMock.transferOrgOwnership.mockResolvedValue({
+      message: 'Ownership transferred successfully',
+    });
+
+    const result = await controller.transferOrgOwnership(
       user,
       { organizationId: 'org-1' },
       { tranfereeId: 'user-2', transferorReplacementOrgRoleId: 'role-1' },
@@ -103,6 +119,7 @@ describe('OrganizationsController', () => {
       user,
       'role-1',
     );
+    expect(result).toEqual({ message: 'Ownership transferred successfully' });
   });
 
   it('createRole delegates org id, role name, permission ids, parent role id and the acting user', async () => {

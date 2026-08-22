@@ -7,7 +7,7 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { createHash, randomBytes } from 'node:crypto';
-import { PrismaClientKnownRequestError } from 'src/generated/prisma/internal/prismaNamespace';
+import { Prisma } from 'src/generated/prisma/client';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { v7 as uuidv7 } from 'uuid';
 import { AuditLogService } from '../audit-log/audit-log.service';
@@ -48,7 +48,7 @@ export class SessionService {
       return { userSession, refreshToken };
     } catch (error: unknown) {
       if (
-        error instanceof PrismaClientKnownRequestError &&
+        error instanceof Prisma.PrismaClientKnownRequestError &&
         error.code === 'P2003'
       ) {
         this.logger.error(
@@ -131,6 +131,9 @@ export class SessionService {
         );
       }
     } catch (error: unknown) {
+      if (error instanceof NotFoundException) {
+        throw error;
+      }
       this.logger.error(
         'SessionInvalidationError',
         error instanceof Error ? error.stack : undefined,
@@ -168,7 +171,7 @@ export class SessionService {
         throw error;
       }
       if (
-        error instanceof PrismaClientKnownRequestError &&
+        error instanceof Prisma.PrismaClientKnownRequestError &&
         error.code === 'P2001'
       ) {
         this.logger.error(

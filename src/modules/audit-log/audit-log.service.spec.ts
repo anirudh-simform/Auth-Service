@@ -218,9 +218,9 @@ describe('AuditLogService', () => {
       prismaMock.auditLog.findMany.mockImplementation(({ where }) =>
         Promise.resolve(
           [
-            { id: 'log-a1', org_id: 'org-A' },
-            { id: 'log-b1', org_id: 'org-B' },
-            { id: 'log-a2', org_id: 'org-A' },
+            { id: 'log-a1', org_id: 'org-A', sequence: 1n },
+            { id: 'log-b1', org_id: 'org-B', sequence: 2n },
+            { id: 'log-a2', org_id: 'org-A', sequence: 3n },
           ].filter((row) => row.org_id === where.org_id),
         ),
       );
@@ -228,8 +228,8 @@ describe('AuditLogService', () => {
       const result = await service.listForOrg('org-A', {});
 
       expect(result).toEqual([
-        { id: 'log-a1', org_id: 'org-A' },
-        { id: 'log-a2', org_id: 'org-A' },
+        { id: 'log-a1', org_id: 'org-A', sequence: '1' },
+        { id: 'log-a2', org_id: 'org-A', sequence: '3' },
       ]);
     });
 
@@ -277,15 +277,17 @@ describe('AuditLogService', () => {
       prismaMock.auditLog.findMany.mockImplementation(({ where }) =>
         Promise.resolve(
           [
-            { id: 'log-1', actor_user_id: 'user-1' },
-            { id: 'log-2', actor_user_id: 'user-2' },
+            { id: 'log-1', actor_user_id: 'user-1', sequence: 1n },
+            { id: 'log-2', actor_user_id: 'user-2', sequence: 2n },
           ].filter((row) => row.actor_user_id === where.actor_user_id),
         ),
       );
 
       const result = await service.listForActor('user-1');
 
-      expect(result).toEqual([{ id: 'log-1', actor_user_id: 'user-1' }]);
+      expect(result).toEqual([
+        { id: 'log-1', actor_user_id: 'user-1', sequence: '1' },
+      ]);
     });
   });
 });

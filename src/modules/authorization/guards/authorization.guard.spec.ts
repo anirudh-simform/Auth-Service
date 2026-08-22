@@ -1,7 +1,13 @@
 import { Test } from '@nestjs/testing';
+import {
+  BadRequestException,
+  ExecutionContext,
+  ForbiddenException,
+  InternalServerErrorException,
+} from '@nestjs/common';
+import { Reflector } from '@nestjs/core';
 import { AuthorizationGuard } from './authorization.guard';
 import { AuthorizationService } from '../authorization.service';
-import { ForbiddenException, InternalServerErrorException } from '@nestjs/common';
 
 describe('AuthorizationGuard', () => {
   let authorizationGuard: AuthorizationGuard;
@@ -10,15 +16,32 @@ describe('AuthorizationGuard', () => {
     isUserAuthorized: jest.fn(),
   };
 
+  const reflectorMock = {
+    getAllAndOverride: jest.fn().mockReturnValue('organization.read'),
+  };
+
   beforeEach(async () => {
     const moduleRef = await Test.createTestingModule({
       providers: [
         AuthorizationGuard,
         { provide: AuthorizationService, useValue: authorizationServiceMock },
+        { provide: Reflector, useValue: reflectorMock },
       ],
     }).compile();
     authorizationGuard = moduleRef.get(AuthorizationGuard);
   });
+
+  const contextWithOrgId = (organizationId: string): ExecutionContext =>
+    ({
+      switchToHttp: () => ({
+        getRequest: () => ({
+          params: { organizationId },
+          user: { id: 'user-1' },
+        }),
+      }),
+      getHandler: () => undefined,
+      getClass: () => undefined,
+    }) as unknown as ExecutionContext;
 
   afterEach(() => {
     jest.clearAllMocks();
@@ -72,5 +95,31 @@ describe('AuthorizationGuard', () => {
         'organization.delete',
       ),
     ).rejects.toThrow(InternalServerErrorException);
+  });
+
+  describe('canActivate', () => {
+    it('rejects a malformed :organizationId with a 400 instead of hitting Prisma with it', async () => {
+      await expect(
+        authorizationGuard.canActivate(contextWithOrgId('not-a-uuid')),
+      ).rejects.toThrow(BadRequestException);
+
+      expect(authorizationServiceMock.isUserAuthorized).not.toHaveBeenCalled();
+    });
+
+    it('proceeds to isUserAuthorized when :organizationId is a valid UUID', async () => {
+      authorizationServiceMock.isUserAuthorized.mockResolvedValueOnce(true);
+
+      await expect(
+        authorizationGuard.canActivate(
+          contextWithOrgId('01a02960-4f81-73b7-bd4a-ee0b5297e202'),
+        ),
+      ).resolves.toBe(true);
+
+      expect(authorizationServiceMock.isUserAuthorized).toHaveBeenCalledWith(
+        'user-1',
+        '01a02960-4f81-73b7-bd4a-ee0b5297e202',
+        'organization.read',
+      );
+    });
   });
 });
