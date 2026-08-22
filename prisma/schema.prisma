@@ -16,7 +16,7 @@ datasource db {
 model User {
   id                String          @id @default(uuid(7)) @db.Uuid
   email             String          @unique
-  password_hash     String
+  password_hash     String?
   is_email_verified Boolean         @default(false)
   terms_accepted_at DateTime?       @db.Timestamptz(6)
   created_at        DateTime        @default(now()) @db.Timestamptz(6)
@@ -24,6 +24,21 @@ model User {
   magic_links       MagicLink[]
   userSessions      UserSession[]
   orgMemberships    OrgMembership[]
+  oauthAccounts     OAuthAccount[]
+}
+
+// Links a social-login identity (Google/GitHub/Microsoft) to a User. A user
+// created purely via OAuth has no password_hash - this is their only credential.
+model OAuthAccount {
+  id                  String   @id @default(uuid(7)) @db.Uuid
+  provider            String
+  provider_account_id String
+  user_id             String   @db.Uuid
+  user                User     @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  created_at          DateTime @default(now()) @db.Timestamptz(6)
+
+  @@unique([provider, provider_account_id])
+  @@index([user_id])
 }
 
 enum MagicLinkType {

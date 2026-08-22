@@ -6,7 +6,7 @@ import * as argon2 from 'argon2';
 jest.mock('argon2');
 import { Test, TestingModule } from '@nestjs/testing';
 import { AuthService } from './auth.service';
-import { JwtService } from '@nestjs/jwt';
+import { JwtModule } from '@nestjs/jwt';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { EmailService } from 'src/common/email/email.service';
 import {
@@ -27,7 +27,8 @@ describe('AuthService', () => {
     magicLink: { deleteMany: jest.fn() },
     userSession: { deleteMany: jest.fn() },
     orgMembership: { deleteMany: jest.fn() },
-    user: { delete: jest.fn() },
+    user: { delete: jest.fn(), create: jest.fn() },
+    oAuthAccount: { create: jest.fn() },
   };
 
   const prismaMock = {
@@ -41,6 +42,10 @@ describe('AuthService', () => {
     },
     orgMembership: {
       findMany: jest.fn(),
+    },
+    oAuthAccount: {
+      findUnique: jest.fn(),
+      create: jest.fn(),
     },
     $transaction: jest.fn((callback: (tx: typeof txMock) => unknown) =>
       callback(txMock),
@@ -68,9 +73,9 @@ describe('AuthService', () => {
 
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
+      imports: [JwtModule.register({ secret: 'test-secret' })],
       providers: [
         AuthService,
-        JwtService,
         { provide: PrismaService, useValue: prismaMock },
         { provide: EmailService, useValue: emailServiceMock },
         { provide: AuditLogService, useValue: auditLogServiceMock },
@@ -126,12 +131,25 @@ describe('AuthService', () => {
         authService.login('dummy@gmail.com', 'password', ip, 'chrome'),
       ).rejects.toThrow('Wrong email or password');
     });
+
+    it('rejects a password-login attempt for an OAuth-only account (no password_hash)', async () => {
+      prismaMock.user.findUnique.mockReturnValueOnce({
+        id: 1,
+        password_hash: null,
+        is_email_verified: true,
+      });
+
+      await expect(
+        authService.login('dummy@gmail.com', 'password', ip, 'chrome'),
+      ).rejects.toThrow('This account uses social login');
+      expect(argon2.verify).not.toHaveBeenCalled();
+    });
   });
 
   describe('me: User profile retrieval', () => {
     it('should throw not found exception when user does not exist', async () => {
       prismaMock.user.findUnique.mockReturnValueOnce(null);
-      await expect(authService.me(1)).rejects.toThrow(
+      await expect(authService.me('1')).rejects.toThrow(
         new NotFoundException('User not found'),
       );
     });
@@ -142,7 +160,7 @@ describe('AuthService', () => {
         password_hash: 'string',
         is_email_verified: false,
       });
-      await expect(authService.me(1)).rejects.toThrow(
+      await expect(authService.me('1')).rejects.toThrow(
         new ForbiddenException('Email not verified: Cannot access profile'),
       );
     });
@@ -206,6 +224,19 @@ describe('AuthService', () => {
       );
       expect(result).toEqual({ message: 'Account deleted successfully' });
     });
+
+    it('skips password verification for an OAuth-only account (no password_hash)', async () => {
+      prismaMock.user.findUnique.mockResolvedValue({ password_hash: null });
+      prismaMock.orgMembership.findMany.mockResolvedValue([]);
+
+      const result = await authService.deleteAccount('user-1');
+
+      expect(argon2.verify).not.toHaveBeenCalled();
+      expect(txMock.user.delete).toHaveBeenCalledWith({
+        where: { id: 'user-1' },
+      });
+      expect(result).toEqual({ message: 'Account deleted successfully' });
+    });
   });
 
   describe('exportMyData', () => {
@@ -263,13 +294,13 @@ describe('AuthService', () => {
   describe('register: consent tracking', () => {
     it('stamps terms_accepted_at when creating a new user', async () => {
       prismaMock.user.findUnique.mockResolvedValue(null);
+      (argon2.hash as jest.Mock).mockResolvedValue('hashed-password');
       const upsertMock = jest.fn().mockResolvedValue({ id: 'user-1' });
       const transactionPrisma = { user: { upsert: upsertMock }, magicLink: { create: jest.fn() } };
-      (prismaMock as unknown as { $transaction: jest.Mock }).$transaction = jest
-        .fn()
-        .mockImplementation((callback: (tx: typeof transactionPrisma) => unknown) =>
-          callback(transactionPrisma),
-        );
+      // mockImplementationOnce so this doesn't leak into other tests sharing prismaMock.$transaction
+      prismaMock.$transaction.mockImplementationOnce(((
+        callback: (tx: typeof transactionPrisma) => unknown,
+      ) => callback(transactionPrisma)) as unknown as typeof prismaMock.$transaction);
 
       await authService.register('new@example.com', 'password123');
 
@@ -281,6 +312,114 @@ describe('AuthService', () => {
           update: expect.objectContaining({
             terms_accepted_at: expect.any(Date),
           }),
+        }),
+      );
+    });
+  });
+
+  describe('register: duplicate email', () => {
+    it('surfaces ConflictException as-is instead of wrapping it in a 500', async () => {
+      prismaMock.user.findUnique.mockResolvedValue({ is_email_verified: true });
+
+      await expect(
+        authService.register('owner1@example.com', 'password123'),
+      ).rejects.toThrow(ConflictException);
+      expect(prismaMock.$transaction).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('loginWithOAuth', () => {
+    const profile = {
+      provider: 'google' as const,
+      providerAccountId: 'provider-account-1',
+      email: 'user@example.com',
+    };
+    const userAgent = 'chrome';
+    const ip = '1.1.1.1';
+
+    beforeEach(() => {
+      sessionServiceMock.createUserSession.mockResolvedValue({
+        userSession: { id: 'session-1', user_id: 'user-1' },
+        refreshToken: 'raw-refresh-token',
+      });
+    });
+
+    it('reuses the linked user when the OAuthAccount already exists', async () => {
+      prismaMock.oAuthAccount.findUnique.mockResolvedValue({ user_id: 'user-1' });
+
+      const result = await authService.loginWithOAuth(profile, userAgent, ip);
+
+      expect(prismaMock.user.findUnique).not.toHaveBeenCalled();
+      expect(prismaMock.$transaction).not.toHaveBeenCalled();
+      expect(sessionServiceMock.createUserSession).toHaveBeenCalledWith(
+        expect.objectContaining({ userId: 'user-1' }),
+      );
+      expect(auditLogServiceMock.record).toHaveBeenCalledWith(
+        expect.objectContaining({
+          eventType: AuditEventType.AUTH_OAUTH_LOGIN_SUCCESS,
+          actorUserId: 'user-1',
+          metadata: { provider: 'google', isNewAccount: false },
+        }),
+      );
+      expect(result).toEqual({
+        access_token: expect.any(String),
+        refresh_token: 'session-1.raw-refresh-token',
+      });
+    });
+
+    it('links a new OAuthAccount to an existing user matched by email', async () => {
+      prismaMock.oAuthAccount.findUnique.mockResolvedValue(null);
+      prismaMock.user.findUnique.mockResolvedValue({ id: 'existing-user' });
+
+      await authService.loginWithOAuth(profile, userAgent, ip);
+
+      expect(prismaMock.oAuthAccount.create).toHaveBeenCalledWith({
+        data: {
+          provider: 'google',
+          provider_account_id: 'provider-account-1',
+          user_id: 'existing-user',
+        },
+      });
+      expect(prismaMock.$transaction).not.toHaveBeenCalled();
+      expect(sessionServiceMock.createUserSession).toHaveBeenCalledWith(
+        expect.objectContaining({ userId: 'existing-user' }),
+      );
+      expect(auditLogServiceMock.record).toHaveBeenCalledWith(
+        expect.objectContaining({
+          metadata: { provider: 'google', isNewAccount: false },
+        }),
+      );
+    });
+
+    it('creates a brand-new user + OAuthAccount when neither exists', async () => {
+      prismaMock.oAuthAccount.findUnique.mockResolvedValue(null);
+      prismaMock.user.findUnique.mockResolvedValue(null);
+      txMock.user.create.mockResolvedValue({ id: 'new-user' });
+
+      await authService.loginWithOAuth(profile, userAgent, ip);
+
+      expect(txMock.user.create).toHaveBeenCalledWith({
+        data: {
+          email: 'user@example.com',
+          password_hash: null,
+          is_email_verified: true,
+          terms_accepted_at: expect.any(Date),
+        },
+      });
+      expect(txMock.oAuthAccount.create).toHaveBeenCalledWith({
+        data: {
+          provider: 'google',
+          provider_account_id: 'provider-account-1',
+          user_id: 'new-user',
+        },
+      });
+      expect(sessionServiceMock.createUserSession).toHaveBeenCalledWith(
+        expect.objectContaining({ userId: 'new-user' }),
+      );
+      expect(auditLogServiceMock.record).toHaveBeenCalledWith(
+        expect.objectContaining({
+          actorUserId: 'new-user',
+          metadata: { provider: 'google', isNewAccount: true },
         }),
       );
     });

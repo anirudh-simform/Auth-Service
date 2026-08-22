@@ -37,6 +37,24 @@ const envSchema = z.object({
   // Stricter window applied to auth endpoints (login/register/refresh/verify-email)
   AUTH_THROTTLE_TTL_SECONDS: z.coerce.number().min(1).default(60),
   AUTH_THROTTLE_LIMIT: z.coerce.number().min(1).default(5),
+
+  // Google OAuth
+  GOOGLE_CLIENT_ID: z.string(),
+  GOOGLE_CLIENT_SECRET: z.string(),
+  GOOGLE_CALLBACK_URL: z.string(),
+  // GitHub OAuth
+  GITHUB_CLIENT_ID: z.string(),
+  GITHUB_CLIENT_SECRET: z.string(),
+  GITHUB_CALLBACK_URL: z.string(),
+  // Microsoft OAuth
+  MICROSOFT_CLIENT_ID: z.string(),
+  MICROSOFT_CLIENT_SECRET: z.string(),
+  MICROSOFT_CALLBACK_URL: z.string(),
+
+  // When set, points every OAuth strategy's authorize/token/profile endpoints at a
+  // local mock server (see scripts/mock-oauth-server.ts) instead of the real
+  // provider - lets OAuth login be tested end-to-end without real credentials.
+  OAUTH_MOCK_BASE_URL: z.string().optional(),
 });
 
 const config = envSchema.parse(process.env);

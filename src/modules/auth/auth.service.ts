@@ -10,7 +10,7 @@ import {
 import { PrismaService } from 'src/prisma/prisma.service';
 import * as argon2 from 'argon2';
 import { createHash, randomBytes } from 'node:crypto';
-import { MagicLinkType } from 'src/generated/prisma/enums';
+import { MagicLinkType } from 'src/generated/prisma/client';
 import { EmailService } from 'src/common/email/email.service';
 import { JwtService } from '@nestjs/jwt';
 import { UAParser } from 'ua-parser-js';
@@ -20,6 +20,7 @@ import { UserSessionWithUserDetails } from './types/express';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { AuditEventType } from '../audit-log/constants/audit-event-types.constant';
 import { AuthorizationService } from '../authorization/authorization.service';
+import { NormalizedOAuthProfile } from './oauth/types/normalized-oauth-profile';
 
 const SESSION_EXPORT_LIMIT = 500;
 
@@ -98,6 +99,9 @@ export class AuthService {
 
       return { message: `User registration email sent to email id: ${email}` };
     } catch (error: unknown) {
+      if (error instanceof ConflictException) {
+        throw error;
+      }
       throw new InternalServerErrorException(error);
     }
   }
@@ -177,6 +181,12 @@ export class AuthService {
         );
       }
 
+      if (!user.password_hash) {
+        throw new BadRequestException(
+          'This account uses social login. Please sign in with your provider instead',
+        );
+      }
+
       const isValidPassword = await argon2.verify(user.password_hash, password);
 
       if (!isValidPassword) {
@@ -229,6 +239,99 @@ export class AuthService {
 
       throw error;
     }
+  }
+
+  /**
+   * OAuth login/registration: finds an existing linked identity, links a
+   * verified-email match to an existing password-based account, or creates
+   * a brand-new user - then issues the same session+JWT as password login.
+   */
+  async loginWithOAuth(
+    profile: NormalizedOAuthProfile,
+    userAgent: string,
+    ip: string,
+  ) {
+    const existingLink = await this.prismaService.oAuthAccount.findUnique({
+      where: {
+        provider_provider_account_id: {
+          provider: profile.provider,
+          provider_account_id: profile.providerAccountId,
+        },
+      },
+      select: { user_id: true },
+    });
+
+    let userId: string;
+    let isNewAccount = false;
+
+    if (existingLink) {
+      userId = existingLink.user_id;
+    } else {
+      const existingUser = await this.prismaService.user.findUnique({
+        where: { email: profile.email },
+        select: { id: true },
+      });
+
+      if (existingUser) {
+        userId = existingUser.id;
+        await this.prismaService.oAuthAccount.create({
+          data: {
+            provider: profile.provider,
+            provider_account_id: profile.providerAccountId,
+            user_id: existingUser.id,
+          },
+        });
+      } else {
+        isNewAccount = true;
+        const created = await this.prismaService.$transaction(async (tx) => {
+          const user = await tx.user.create({
+            data: {
+              email: profile.email,
+              password_hash: null,
+              is_email_verified: true,
+              terms_accepted_at: new Date(),
+            },
+          });
+
+          await tx.oAuthAccount.create({
+            data: {
+              provider: profile.provider,
+              provider_account_id: profile.providerAccountId,
+              user_id: user.id,
+            },
+          });
+
+          return user;
+        });
+        userId = created.id;
+      }
+    }
+
+    const deviceInfo = UAParser(userAgent);
+    const { userSession, refreshToken } =
+      await this.sessionService.createUserSession({
+        userId,
+        userAgent: deviceInfo.ua,
+        userIp: ip,
+      });
+
+    const payload = { sub: userId, email: profile.email, sid: userSession.id };
+    const accessToken = await this.jwtService.signAsync(payload);
+
+    await this.auditLogService.record({
+      eventType: AuditEventType.AUTH_OAUTH_LOGIN_SUCCESS,
+      actorUserId: userId,
+      targetType: 'User',
+      targetId: userId,
+      ipAddress: ip,
+      userAgent,
+      metadata: { provider: profile.provider, isNewAccount },
+    });
+
+    return {
+      access_token: accessToken,
+      refresh_token: `${userSession.id}.${refreshToken}`,
+    };
   }
 
   async me(userId: string) {
@@ -286,7 +389,7 @@ export class AuthService {
    * bare session token alone. Blocks deletion if the user is an org Owner,
    * since deleting them would orphan the org.
    */
-  async deleteAccount(userId: string, password: string) {
+  async deleteAccount(userId: string, password?: string) {
     const user = await this.prismaService.user.findUnique({
       where: { id: userId },
       select: { password_hash: true },
@@ -296,9 +399,16 @@ export class AuthService {
       throw new NotFoundException('User not found');
     }
 
-    const isValidPassword = await argon2.verify(user.password_hash, password);
-    if (!isValidPassword) {
-      throw new BadRequestException('Wrong password');
+    // OAuth-only accounts have no password to re-confirm - the existing JWT
+    // session is the trust boundary for them.
+    if (user.password_hash) {
+      if (!password) {
+        throw new BadRequestException('Password is required');
+      }
+      const isValidPassword = await argon2.verify(user.password_hash, password);
+      if (!isValidPassword) {
+        throw new BadRequestException('Wrong password');
+      }
     }
 
     const memberships = await this.prismaService.orgMembership.findMany({
